@@ -18,11 +18,7 @@ function toInt(s: string, def = 0): number {
     return Number.isFinite(n) ? Math.trunc(n) : def
 }
 
-function isRecord(x: unknown): x is Record<string, unknown> {
-    return typeof x === "object" && x !== null
-}
-
-// topo по computed inA/inB (после apply wires логики валидации)
+// topo по computed inA/inB
 function topoSortOrThrow(nodes: EditorNodeUi[]): { ok: true } | { ok: false; stuck: number[] } {
     const ids = nodes.map((n) => n.localId)
     const idSet = new Set(ids)
@@ -37,12 +33,7 @@ function topoSortOrThrow(nodes: EditorNodeUi[]): { ok: true } | { ok: false; stu
 
     const inDeg = new Map<number, number>()
     for (const id of ids) inDeg.set(id, 0)
-
-    for (const [to, d] of deps) {
-        for (const from of d) {
-            inDeg.set(to, (inDeg.get(to) ?? 0) + 1)
-        }
-    }
+    for (const [to, d] of deps) for (const _ of d) inDeg.set(to, (inDeg.get(to) ?? 0) + 1)
 
     const q: number[] = []
     for (const [id, deg] of inDeg) if (deg === 0) q.push(id)
@@ -68,18 +59,19 @@ function topoSortOrThrow(nodes: EditorNodeUi[]): { ok: true } | { ok: false; stu
         const stuck = ids.filter((id) => !out.includes(id)).sort((a, b) => a - b)
         return { ok: false, stuck }
     }
-
     return { ok: true }
 }
 
-/**
- * PLC-like validation:
- * - cycleMs valid
- * - nodes localId unique
- * - wires valid (existing nodes, no self-wire, no double wire per port, respect hideB)
- * - build computed inA/inB from wires and validate PLC semantic constraints
- * - detect cycles
- */
+function isOutputLike(type: string) {
+    const t = type.toUpperCase()
+    return t.endsWith("_OUT") || t === "DIGITAL_OUT" || t === "PWM_OUT" || t === "AO" || t === "SAFE_OUTPUT"
+}
+
+function isTimer(type: string) {
+    const t = type.toUpperCase()
+    return t === "TON" || t === "TOFF" || t === "TP"
+}
+
 export function validateGraph(cycleMsStr: string, nodes: EditorNodeUi[], wires: WireUi[]): ValidationError[] {
     const errs: ValidationError[] = []
 
@@ -95,14 +87,13 @@ export function validateGraph(cycleMsStr: string, nodes: EditorNodeUi[], wires: 
         errs.push({ message: "localId должен быть уникальным у каждого узла" })
     }
 
-    // validate node params types
+    // params types + spec constraints
     for (const n of nodes) {
         if (!isInt(n.paramInt)) errs.push({ nodeLocalId: n.localId, field: "paramInt", message: "paramInt должен быть int" })
         if (!isNum(n.paramFloat)) errs.push({ nodeLocalId: n.localId, field: "paramFloat", message: "paramFloat должен быть number" })
         if (!isInt(n.paramMs)) errs.push({ nodeLocalId: n.localId, field: "paramMs", message: "paramMs должен быть int" })
         if (!isInt(n.flags)) errs.push({ nodeLocalId: n.localId, field: "flags", message: "flags должен быть int" })
 
-        // valueType expected by spec (если задано)
         const expected = NODE_SPEC[n.type]?.expectedValueType
         if (expected != null && n.valueType !== expected) {
             errs.push({
@@ -113,22 +104,15 @@ export function validateGraph(cycleMsStr: string, nodes: EditorNodeUi[], wires: 
         }
     }
 
-    // ----- WIRES VALIDATION -----
-
-    // 1) all endpoints exist, no self wire
+    // ---- wire validity ----
+    // endpoint exist + no self
     for (const w of wires) {
-        if (!idSet.has(w.fromNode)) {
-            errs.push({ message: `Wire: fromNode=${w.fromNode} не существует` })
-        }
-        if (!idSet.has(w.toNode)) {
-            errs.push({ message: `Wire: toNode=${w.toNode} не существует` })
-        }
-        if (w.fromNode === w.toNode) {
-            errs.push({ nodeLocalId: w.toNode, message: `Wire: self-wire запрещён (node ${w.toNode} -> itself)` })
-        }
+        if (!idSet.has(w.fromNode)) errs.push({ message: `Wire: fromNode=${w.fromNode} не существует` })
+        if (!idSet.has(w.toNode)) errs.push({ message: `Wire: toNode=${w.toNode} не существует` })
+        if (w.fromNode === w.toNode) errs.push({ nodeLocalId: w.toNode, message: `Wire: self-wire запрещён (node ${w.toNode})` })
     }
 
-    // 2) no double wire per port + respect hideB
+    // no double wire per port + respect hideB
     const portKey = (toNode: number, toPort: "A" | "B") => `${toNode}:${toPort}`
     const seen = new Set<string>()
     for (const w of wires) {
@@ -146,63 +130,57 @@ export function validateGraph(cycleMsStr: string, nodes: EditorNodeUi[], wires: 
         }
     }
 
-    // 3) compute inA/inB from wires (это для семантических проверок + cycle detect)
+    // type-aware wires: from.valueType must match to.valueType (упрощённая, но строгая модель)
+    for (const w of wires) {
+        const from = nodes.find((n) => n.localId === w.fromNode)
+        const to = nodes.find((n) => n.localId === w.toNode)
+        if (!from || !to) continue
+
+        if (from.valueType !== to.valueType) {
+            errs.push({
+                nodeLocalId: w.toNode,
+                field: w.toPort === "A" ? "inA" : "inB",
+                message: `Несовместимые типы: ${from.valueType === 0 ? "BOOL" : from.valueType === 1 ? "INT" : "REAL"} -> ${to.valueType === 0 ? "BOOL" : to.valueType === 1 ? "INT" : "REAL"}`,
+            })
+        }
+    }
+
+    // compute inA/inB from wires
     const inA = new Map<number, number>()
     const inB = new Map<number, number>()
     for (const w of wires) {
         if (w.toPort === "A") inA.set(w.toNode, w.fromNode)
         else inB.set(w.toNode, w.fromNode)
     }
-
     const computed: EditorNodeUi[] = nodes.map((n) => ({
         ...n,
         inA: inA.get(n.localId) ?? -1,
         inB: inB.get(n.localId) ?? -1,
     }))
 
-    // ----- PLC semantic constraints -----
+    // PLC semantic constraints
     for (const n of computed) {
         const t = n.type.toUpperCase()
 
-        if (t === "TON" || t === "TOFF") {
-            if (toInt(n.paramMs) <= 0) {
-                errs.push({ nodeLocalId: n.localId, field: "paramMs", message: `${t}: paramMs должен быть > 0` })
-            }
-            if (n.inA === -1) {
-                errs.push({ nodeLocalId: n.localId, field: "inA", message: `${t}: нужен вход A` })
-            }
+        // timers
+        if (isTimer(t)) {
+            if (toInt(n.paramMs) <= 0) errs.push({ nodeLocalId: n.localId, field: "paramMs", message: `${t}: paramMs должен быть > 0` })
+            if (n.inA === -1) errs.push({ nodeLocalId: n.localId, field: "inA", message: `${t}: нужен вход A` })
         }
 
-        if (t.endsWith("_OUT") || t === "DIGITAL_OUT" || t === "PWM_OUT" || t === "AO") {
-            if (n.inA === -1) {
-                errs.push({ nodeLocalId: n.localId, field: "inA", message: `${t}: нужен вход A` })
-            }
+        // outputs require A
+        if (isOutputLike(t)) {
+            if (n.inA === -1) errs.push({ nodeLocalId: n.localId, field: "inA", message: `${t}: нужен вход A` })
         }
     }
 
     // at least one output node
-    const hasOut = nodes.some((n) => n.type.toUpperCase().includes("OUT") || n.type.toUpperCase() === "AO")
-    if (!hasOut) errs.push({ message: "В графе должен быть хотя бы один выходной узел (*_OUT или AO)" })
+    const hasOut = nodes.some((n) => isOutputLike(n.type))
+    if (!hasOut) errs.push({ message: "В графе должен быть хотя бы один выходной узел (*_OUT / DIGITAL_OUT / PWM_OUT / AO / SAFE_OUTPUT)" })
 
-    // cycles detection (feedback loop)
+    // cycles
     const topo = topoSortOrThrow(computed)
-    if (!topo.ok) {
-        errs.push({ message: `Цикл в графе (feedback loop) запрещён. Узлы: ${topo.stuck.join(", ")}` })
-    }
-
-    // wires validate
-    for (const w of wires) {
-        if (w.fromNode === w.toNode) errs.push({ message: `Wire loop: ${w.fromNode} -> ${w.toNode}` })
-
-        const to = nodes.find((n) => n.localId === w.toNode)
-        const from = nodes.find((n) => n.localId === w.fromNode)
-        if (!to) errs.push({ message: `Wire target not found: toNode=${w.toNode}` })
-        if (!from) errs.push({ message: `Wire source not found: fromNode=${w.fromNode}` })
-
-        const hideB = to ? (NODE_SPEC[to.type]?.ports?.hideB ?? false) : false
-        if (w.toPort === "B" && hideB) errs.push({ message: `Wire to hidden port B: node=${w.toNode}` })
-    }
-
+    if (!topo.ok) errs.push({ message: `Цикл в графе (feedback loop) запрещён. Узлы: ${topo.stuck.join(", ")}` })
 
     return errs
 }

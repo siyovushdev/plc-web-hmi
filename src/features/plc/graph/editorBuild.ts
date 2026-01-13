@@ -1,7 +1,6 @@
 import type { EditorNodeUi, WireUi } from "./editorTypes"
 
-
-// как на Android: сортируем по localId, remap localId -> index, inA/inB переводим в индекс
+// apply wires: inA/inB берём только из wires (истина)
 function applyWires(nodes: EditorNodeUi[], wires: WireUi[]): EditorNodeUi[] {
     const inA = new Map<number, number>()
     const inB = new Map<number, number>()
@@ -18,11 +17,11 @@ function applyWires(nodes: EditorNodeUi[], wires: WireUi[]): EditorNodeUi[] {
     }))
 }
 
+// детерминированный topo-sort по computed inA/inB
 function topoSortLocalIds(nodes: EditorNodeUi[]): number[] {
     const ids = nodes.map((n) => n.localId)
     const idSet = new Set(ids)
 
-    // зависимости: node -> [deps...]
     const deps = new Map<number, number[]>()
     for (const n of nodes) {
         const d: number[] = []
@@ -31,22 +30,12 @@ function topoSortLocalIds(nodes: EditorNodeUi[]): number[] {
         deps.set(n.localId, d)
     }
 
-    // Kahn
     const inDeg = new Map<number, number>()
     for (const id of ids) inDeg.set(id, 0)
-
-    for (const [to, d] of deps) {
-        for (const from of d) {
-            inDeg.set(to, (inDeg.get(to) ?? 0) + 1)
-        }
-    }
+    for (const [to, d] of deps) for (const _ of d) inDeg.set(to, (inDeg.get(to) ?? 0) + 1)
 
     const q: number[] = []
-    for (const [id, deg] of inDeg) {
-        if (deg === 0) q.push(id)
-    }
-
-    // детерминизм
+    for (const [id, deg] of inDeg) if (deg === 0) q.push(id)
     q.sort((a, b) => a - b)
 
     const out: number[] = []
@@ -54,7 +43,6 @@ function topoSortLocalIds(nodes: EditorNodeUi[]): number[] {
         const id = q.shift()!
         out.push(id)
 
-        // уменьшаем inDeg у тех, кто зависит от id
         for (const [to, d] of deps) {
             if (!d.includes(id)) continue
             const nd = (inDeg.get(to) ?? 0) - 1
@@ -67,29 +55,33 @@ function topoSortLocalIds(nodes: EditorNodeUi[]): number[] {
     }
 
     if (out.length !== ids.length) {
-        // есть цикл
         const stuck = ids.filter((id) => !out.includes(id)).sort((a, b) => a - b)
         throw new Error(`Cycle detected (feedback loop). Nodes: ${stuck.join(", ")}`)
     }
-
     return out
 }
 
+function toIntSafe(s: string): number {
+    const n = Number(s)
+    return Number.isFinite(n) ? Math.trunc(n) : 0
+}
+
+function toNumSafe(s: string): number {
+    const n = Number(s)
+    return Number.isFinite(n) ? n : 0
+}
 
 export function buildGraph(cycleMsStr: string, nodes: EditorNodeUi[], wires: WireUi[]) {
-    const cycleMs = Number(cycleMsStr)
+    const cycleMs = toIntSafe(cycleMsStr)
     const compiledNodes = applyWires(nodes, wires)
 
-    // 1) порядок исполнения = topo
     const order = topoSortLocalIds(compiledNodes)
-
-    // 2) remap localId -> index (как настоящий runtime)
-    const localIdToIndex = new Map<number, number>()
-    order.forEach((localId, idx) => localIdToIndex.set(localId, idx))
-
-    // 3) собрать nodes в порядке исполнения, и перевести inA/inB в индексы
     const byId = new Map<number, EditorNodeUi>()
     for (const n of compiledNodes) byId.set(n.localId, n)
+
+    // localId -> index (runtime index)
+    const localIdToIndex = new Map<number, number>()
+    order.forEach((localId, idx) => localIdToIndex.set(localId, idx))
 
     const outNodes = order.map((localId) => {
         const n = byId.get(localId)!
@@ -97,19 +89,17 @@ export function buildGraph(cycleMsStr: string, nodes: EditorNodeUi[], wires: Wir
         const inB = n.inB === -1 ? -1 : (localIdToIndex.get(n.inB) ?? -1)
 
         return {
-            id: localId, // localId оставляем как "stable id" для UI/диагностики
+            id: localId, // stable id = localId
             type: n.type,
             valueType: n.valueType,
             inA,
             inB,
-            paramInt: Number(n.paramInt),
-            paramFloat: Number(n.paramFloat),
-            paramMs: Number(n.paramMs),
-            flags: Number(n.flags),
+            paramInt: toIntSafe(n.paramInt),
+            paramFloat: toNumSafe(n.paramFloat),
+            paramMs: toIntSafe(n.paramMs),
+            flags: toIntSafe(n.flags),
         }
     })
 
     return { cycleMs, nodes: outNodes }
 }
-
-

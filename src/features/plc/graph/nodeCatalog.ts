@@ -45,7 +45,7 @@ export const NODE_TYPES = [
 
 export type NodeType = (typeof NODE_TYPES)[number]
 
-// (опционально) удобные подписи для UI
+// (опционально) подписи
 export const NODE_LABEL: Record<NodeType, string> = {
     CONST_BOOL: "CONST_BOOL (константа bool)",
     CONST_INT: "CONST_INT (константа int)",
@@ -58,6 +58,7 @@ export const NODE_LABEL: Record<NodeType, string> = {
     SR: "SR (защёлка Set/Reset)",
     TON: "TON (таймер на включение)",
     TOFF: "TOFF (таймер на выключение)",
+    TP: "TP (одноимпульсный таймер)",
     R_TRIG: "R_TRIG (фронт 0→1)",
     F_TRIG: "F_TRIG (спад 1→0)",
     AI_IN: "AI_IN (аналоговый вход)",
@@ -65,7 +66,6 @@ export const NODE_LABEL: Record<NodeType, string> = {
     COMPARE_LT: "COMPARE_LT (A < B)",
     PWM_OUT: "PWM_OUT (ШИМ выход)",
     MUX2: "MUX2 (селектор)",
-    TP: "TP (одноимпульсный таймер)",
     HYST: "HYST (гистерезис)",
     SCALE: "SCALE (y=a*x+b)",
     ADD: "ADD (A+B float)",

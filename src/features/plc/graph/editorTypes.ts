@@ -16,9 +16,8 @@ export type EditorNodeUi = {
     y?: number
 }
 
-
 export type PlcNodeDefJson = {
-    id: number // индекс после remap
+    id: number // stable id для диагностики (localId)
     type: string
     valueType: number
     inA: number
@@ -43,12 +42,12 @@ export type ValidationError = {
 export const VALUE_TYPES = [0, 1, 2] as const
 export type ValueType = (typeof VALUE_TYPES)[number]
 
-export type PortId = "A" | "B"   // пока 2 входа
+export type PortId = "A" | "B"
 
 export type WireUi = {
-    fromNode: number   // localId источника
-    toNode: number     // localId назначения
-    toPort: PortId     // "A" | "B"
+    fromNode: number
+    toNode: number
+    toPort: PortId
 }
 
 export type ProjectUiV2 = {
@@ -57,4 +56,3 @@ export type ProjectUiV2 = {
     nodes: EditorNodeUi[]
     wires: WireUi[]
 }
-

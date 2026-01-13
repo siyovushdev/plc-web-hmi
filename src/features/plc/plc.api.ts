@@ -64,3 +64,10 @@ export async function activateGraph(): Promise<unknown> {
         method: "POST",
     })
 }
+
+// NEW: get active graphJson (последний успешно activate)
+export async function getActiveGraphJson(): Promise<string> {
+    const resp = await fetchJson<{ ok: boolean; graphJson: string }>("/api/plc/graph/active", { method: "GET" })
+    return resp.graphJson
+}
+

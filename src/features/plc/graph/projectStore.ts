@@ -42,7 +42,6 @@ function isPortId(x: unknown): x is PortId {
 
 function isEditorNodeUi(x: unknown): x is EditorNodeUi {
     if (!isRecord(x)) return false
-    // минимальная проверка ключей, чтобы не плодить тонны кода
     return (
         typeof x.localId === "number" &&
         typeof x.type === "string" &&
@@ -58,11 +57,7 @@ function isEditorNodeUi(x: unknown): x is EditorNodeUi {
 
 function isWireUi(x: unknown): x is WireUi {
     if (!isRecord(x)) return false
-    return (
-        typeof x.fromNode === "number" &&
-        typeof x.toNode === "number" &&
-        isPortId(x.toPort)
-    )
+    return typeof x.fromNode === "number" && typeof x.toNode === "number" && isPortId(x.toPort)
 }
 
 function migrateWiresFromNodes(nodes: EditorNodeUi[]): WireUi[] {
@@ -102,7 +97,7 @@ function parseProjectV2(obj: unknown): ProjectUiV2 | null {
 function parseProjectV1AndMigrate(obj: unknown): ProjectUiV2 | null {
     if (!isRecord(obj)) return null
 
-    const ver = getNumber(obj.version) // может быть null если поля нет
+    const ver = getNumber(obj.version)
     const cycleMs = getString(obj.cycleMs)
     const nodesArr = getArray(obj.nodes)
 

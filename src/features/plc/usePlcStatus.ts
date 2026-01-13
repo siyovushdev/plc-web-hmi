@@ -4,6 +4,7 @@ import { forceOutput, getPlcStatus, releaseOutput } from "./plc.api"
 
 export function usePlcStatus(pollMs = 1000) {
     const [status, setStatus] = useState<PlcStatus | null>(null)
+    const [receivedAtMs, setReceivedAtMs] = useState<number>(0)
     const [error, setError] = useState<string | null>(null)
     const [busyNodeId, setBusyNodeId] = useState<number | null>(null)
 
@@ -16,6 +17,7 @@ export function usePlcStatus(pollMs = 1000) {
         try {
             const s = await getPlcStatus()
             setStatus(s)
+            setReceivedAtMs(Date.now())
             setError(null)
         } catch (e) {
             setError(e instanceof Error ? e.message : "Unknown error")
@@ -67,5 +69,6 @@ export function usePlcStatus(pollMs = 1000) {
         [refresh]
     )
 
-    return { status, error, busyNodeId, refresh, toggleDigitalOutNode, releaseNode }
+    return { status, receivedAtMs, error, busyNodeId, refresh, toggleDigitalOutNode, releaseNode }
+
 }
