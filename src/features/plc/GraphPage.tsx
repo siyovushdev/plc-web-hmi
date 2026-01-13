@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { usePlcStatus } from "./usePlcStatus"
-import { activateGraph, uploadGraph, getActiveGraphJson } from "./plc.api"
+import { activateGraph, uploadGraph, getActiveGraphMeta, forceOutput, releaseOutput } from "./plc.api"
 import type { EditorNodeUi, ValidationError, WireUi, ProjectUiV2 } from "./graph/editorTypes"
 import { validateGraph } from "./graph/editorValidate"
 import { buildGraph } from "./graph/editorBuild"
@@ -11,7 +11,6 @@ import type { ParamSpec } from "./graph/nodeUiSpec"
 import { autoLayout } from "./graph/autoLayout"
 import { GraphFlow } from "./graph/GraphFlow"
 import type { PlcNodeState } from "./plc.types"
-import { forceOutput, releaseOutput } from "./plc.api"
 
 
 
@@ -163,8 +162,20 @@ function builtToEditorProject(built: BuiltGraph): { cycleMs: string; nodes: Edit
     return { cycleMs: String(built.cycleMs), nodes: editorNodes, wires }
 }
 
+async function sha256Hex(text: string): Promise<string> {
+    const enc = new TextEncoder().encode(text)
+    const buf = await crypto.subtle.digest("SHA-256", enc)
+    const bytes = new Uint8Array(buf)
+    let out = ""
+    for (const b of bytes) out += b.toString(16).padStart(2, "0")
+    return out
+}
+
 
 export function GraphPage() {
+    const [activeSha, setActiveSha] = useState<string | null>(null)
+    const [editorSha, setEditorSha] = useState<string | null>(null)
+    const [shaErr, setShaErr] = useState<string | null>(null)
     const { status, error: statusErr, refresh } = usePlcStatus(1000)
     const [hydrated, setHydrated] = useState(false)
     const [cycleMs, setCycleMs] = useState("10")
@@ -198,6 +209,34 @@ export function GraphPage() {
         return m
     }, [errs])
 
+    async function refreshActiveMeta() {
+        try {
+            const meta = await getActiveGraphMeta()
+
+            if (!meta) {
+                setActiveSha(null)
+                setShaErr(null)
+                return
+            }
+            // meta.graphJson -> parse -> canonical -> sha
+            const builtActive = parseBuiltGraphOrThrow(meta.graphJson)
+            const canonical = canonicalBuiltGraph(builtActive)
+            const sha = await sha256Hex(canonical)
+
+            setActiveSha(sha)
+            setShaErr(null)
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e)
+            if (msg.includes("404") || msg.toLowerCase().includes("not found")) {
+                setActiveSha(null)
+                setShaErr(null)
+                return
+            }
+            setShaErr(msg)
+        }
+    }
+
+
     useEffect(() => {
         const p = loadProject()
         if (p) {
@@ -215,6 +254,12 @@ export function GraphPage() {
         saveProject(p)
     }, [hydrated, cycleMs, nodes, wires])
 
+    useEffect(() => {
+        refreshActiveMeta()
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [])
+
+
     const built = useMemo(() => {
         try {
             return buildGraph(cycleMs, nodes, wires)
@@ -222,6 +267,75 @@ export function GraphPage() {
             return null
         }
     }, [cycleMs, nodes, wires])
+
+    function canonicalBuiltGraph(g: BuiltGraph): string {
+        const nodes = g.nodes
+            .map((n) => ({
+                id: Number(n.id),
+                type: String(n.type),
+                valueType: Number(n.valueType),
+                inA: Number(n.inA),
+                inB: Number(n.inB),
+                paramInt: Number(n.paramInt),
+                paramFloat: Number(n.paramFloat),
+                paramMs: Number(n.paramMs),
+                flags: Number(n.flags),
+            }))
+            .sort((a, b) => a.id - b.id)
+
+        const cycleMs = Number(g.cycleMs)
+        return JSON.stringify({ cycleMs, nodes })
+    }
+
+    function canonicalBuilt(b: unknown): string {
+        if (typeof b !== "object" || b == null) return JSON.stringify(b)
+
+        const g = b as { cycleMs: unknown; nodes?: Array<Record<string, unknown>> }
+
+        const cycleMs = typeof g.cycleMs === "number" ? g.cycleMs : Number(g.cycleMs)
+
+        const nodes = (g.nodes ?? []).map((n) => ({
+            id: n.id,
+            type: n.type,
+            valueType: n.valueType,
+            inA: n.inA,
+            inB: n.inB,
+            paramInt: n.paramInt,
+            paramFloat: n.paramFloat,
+            paramMs: n.paramMs,
+            flags: n.flags,
+        }))
+
+        nodes.sort((a, b2) => Number(a.id) - Number(b2.id))
+
+        return JSON.stringify({ cycleMs, nodes })
+    }
+
+
+
+    useEffect(() => {
+        let cancelled = false
+
+        async function run() {
+            try {
+                if (!built) {
+                    setEditorSha(null)
+                    return
+                }
+                const json = canonicalBuilt(built)
+                const sha = await sha256Hex(json)
+                if (!cancelled) setEditorSha(sha)
+            } catch (e) {
+                if (!cancelled) setEditorSha(null)
+            }
+        }
+
+        run()
+        return () => {
+            cancelled = true
+        }
+    }, [built])
+
 
     const builtJson = useMemo(() => (built ? JSON.stringify(built, null, 2) : "—"), [built])
     const allNodeIds = useMemo(() => nodes.map((n) => n.localId).sort((a, b) => a - b), [nodes])
@@ -264,8 +378,15 @@ export function GraphPage() {
         setLastResp(null)
         setBusy("loadActive")
         try {
-            const json = await getActiveGraphJson()
-            const builtActive = parseBuiltGraphOrThrow(json)
+            const meta = await getActiveGraphMeta()
+            if (!meta) {
+                setActiveSha(null)
+                setShaErr(null)
+                throw new Error("No active graph")
+            }
+            setActiveSha(meta.sha256)
+
+            const builtActive = parseBuiltGraphOrThrow(meta.graphJson)
             const proj = builtToEditorProject(builtActive)
 
             setCycleMs(proj.cycleMs)
@@ -312,6 +433,7 @@ export function GraphPage() {
             const resp = await activateGraph()
             setLastResp(resp)
             await refresh()
+            await refreshActiveMeta()
         } catch (e) {
             setLastResp({ ok: false, error: e instanceof Error ? e.message : String(e) })
         } finally {
@@ -399,6 +521,35 @@ export function GraphPage() {
                     nodes={status?.activeGraph?.nodes} · conn={status?.activeGraph?.connections} · errors={status?.activeGraph?.compileErrors}
                 </div>
             </div>
+
+            <div style={{ marginTop: 8, display: "flex", gap: 10, alignItems: "center" }}>
+                <span style={{ fontWeight: 700 }}>Sync:</span>
+
+                {!built ? (
+                    <span style={{ padding: "2px 8px", borderRadius: 999, background: "#fee2e2", color: "#991b1b", fontWeight: 800 }}>
+            INVALID
+        </span>
+                ) : !activeSha ? (
+                    <span style={{ padding: "2px 8px", borderRadius: 999, background: "#f3f4f6", color: "#374151", fontWeight: 800 }}>
+            NO ACTIVE
+        </span>
+                ) : editorSha && editorSha === activeSha ? (
+                    <span style={{ padding: "2px 8px", borderRadius: 999, background: "#dcfce7", color: "#166534", fontWeight: 800 }}>
+            MATCH
+        </span>
+                ) : (
+                    <span style={{ padding: "2px 8px", borderRadius: 999, background: "#ffedd5", color: "#9a3412", fontWeight: 800 }}>
+            DIRTY
+        </span>
+                )}
+
+                {shaErr && (
+                    <span style={{ color: "#991b1b", fontSize: 12 }}>
+            hash error: {shaErr}
+        </span>
+                )}
+            </div>
+
 
             <div style={{ marginTop: 12, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
                 <label style={{ display: "flex", gap: 8, alignItems: "center" }}>

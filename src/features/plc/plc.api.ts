@@ -71,3 +71,12 @@ export async function getActiveGraphJson(): Promise<string> {
     return resp.graphJson
 }
 
+export type ActiveGraphMeta = { graphJson: string; sha256: string }
+
+export async function getActiveGraphMeta(): Promise<ActiveGraphMeta | null> {
+    const r = await fetch("/api/plc/graph/active", { method: "GET" })
+    if (r.status === 404) return null
+    if (!r.ok) throw new Error(`HTTP ${r.status}`)
+    const j = (await r.json()) as { ok: boolean; graphJson: string; sha256: string }
+    return { graphJson: j.graphJson, sha256: j.sha256 }
+}
