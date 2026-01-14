@@ -11,8 +11,9 @@ import type { ParamSpec } from "./graph/nodeUiSpec"
 import { autoLayout } from "./graph/autoLayout"
 import { GraphFlow } from "./graph/GraphFlow"
 import type { PlcNodeState } from "./plc.types"
-
-
+import { BlockLibrary } from "./graph/BlockLibrary"
+import { PropertiesPanel } from "./graph/PropertiesPanel"
+import { ReactFlowProvider } from "@xyflow/react"
 
 function nextLocalId(nodes: EditorNodeUi[]) {
     const maxId = nodes.reduce((m, n) => Math.max(m, n.localId), -1)
@@ -235,6 +236,26 @@ export function GraphPage() {
             setShaErr(msg)
         }
     }
+
+    useEffect(() => {
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key === "Delete" || e.key === "Backspace") {
+                // чтобы не удалять когда курсор в input/select
+                const t = e.target as HTMLElement | null
+                const tag = t?.tagName?.toLowerCase()
+                if (tag === "input" || tag === "textarea" || tag === "select") return
+
+                if (selectedNodeId != null) {
+                    e.preventDefault()
+                    removeNode(selectedNodeId)
+                }
+            }
+        }
+
+        window.addEventListener("keydown", onKeyDown)
+        return () => window.removeEventListener("keydown", onKeyDown)
+    }, [selectedNodeId, nodes, wires])
+
 
 
     useEffect(() => {
@@ -489,160 +510,164 @@ export function GraphPage() {
         await refresh()
     }
 
+    const isMatch = !!built && !!activeSha && !!editorSha && editorSha === activeSha
+    const syncLabel = !built ? "INVALID" : !activeSha ? "NO ACTIVE" : isMatch ? "MATCH" : "DIRTY"
+
+    function createNode(type: NodeType, pos: { x: number; y: number }) {
+        let createdId = -1
+
+        setNodes((prev) => {
+            createdId = nextLocalId(prev)
+
+            const expected = NODE_SPEC[type]?.expectedValueType
+            const n: EditorNodeUi = {
+                ...defaultNode(createdId),
+                type,
+                valueType: (expected ?? 0) as 0 | 1 | 2,
+                x: pos.x,
+                y: pos.y,
+            }
+
+            return [...prev, n]
+        })
+
+        if (createdId >= 0) setSelectedNodeId(createdId)
+    }
+
+
 
     return (
-        <div style={{ padding: 16, margin: "0 auto", fontFamily: "system-ui" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-                <div>
-                    <h2 style={{ margin: 0 }}>Graph Editor</h2>
-                    <div style={{ marginTop: 6, opacity: 0.8 }}>
+        <div className="plc-page">
+            {/* ===== TOPBAR (как на скрине) ===== */}
+            <div className="plc-topbar">
+                <div className="plc-brand">
+                    <h2 className="plc-brand__title">Graph Editor</h2>
+                    <div className="plc-brand__sub">
                         {status?.connection.ip}:{status?.connection.port} · {status?.connection.linkStatus} · mode={status?.connection.mode}
                     </div>
                 </div>
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <button onClick={refresh} style={{ padding: "8px 12px" }}>
-                        Refresh
+
+                <div className="plc-actions">
+        <span className={`plc-pill ${isMatch ? "plc-pill--match" : "plc-pill--dirty"}`}>
+          {syncLabel}
+        </span>
+
+                    <button className="plc-btn plc-btn--ghost" onClick={onUpload} disabled={busy != null}>
+                        {busy === "upload" ? "Uploading..." : "Upload"}
+                    </button>
+
+                    <button className="plc-btn plc-btn--ghost" onClick={onActivate} disabled={busy != null}>
+                        {busy === "activate" ? "Activating..." : "Activate"}
+                    </button>
+
+                    <button className="plc-btn plc-btn--ghost" onClick={onLoadActive} disabled={busy != null}>
+                        {busy === "loadActive" ? "Loading..." : "Load Active"}
+                    </button>
+
+                    <button
+                        className="plc-btn plc-btn--ghost"
+                        onClick={() => {
+                            try {
+                                setNodes((prev) => autoLayout(prev, wires))
+                            } catch (e) {
+                                setLastResp({ ok: false, error: e instanceof Error ? e.message : String(e) })
+                            }
+                        }}
+                        disabled={busy != null}
+                    >
+                        Auto Layout
+                    </button>
+
+                    <button className="plc-btn plc-btn--ghost" onClick={refresh}>Refresh</button>
+
+                    {/* визуальная кнопка RUN как на макете */}
+                    <button className="plc-btn plc-btn--run" type="button">
+                        RUN
                     </button>
                 </div>
             </div>
 
+            {/* ===== ERROR STRIP ===== */}
             {statusErr && (
-                <div style={{ marginTop: 12, padding: 10, borderRadius: 8, background: "#fee2e2", color: "#991b1b" }}>
+                <div style={{ marginTop: 12, padding: 10, borderRadius: 12, border: "1px solid rgba(239,68,68,.35)", background: "rgba(239,68,68,.10)", color: "#ffb4b4", fontWeight: 800 }}>
                     {statusErr}
                 </div>
             )}
 
-            <div style={{ marginTop: 12, padding: 12, border: "1px solid #e5e7eb", borderRadius: 10 }}>
-                <div style={{ opacity: 0.7, fontSize: 12 }}>Active graph</div>
-                <div style={{ fontWeight: 700, marginTop: 6 }}>
-                    {status?.activeGraph?.name} · {status?.activeGraph?.runState}
-                </div>
-                <div style={{ opacity: 0.85, fontSize: 12, marginTop: 6 }}>
-                    nodes={status?.activeGraph?.nodes} · conn={status?.activeGraph?.connections} · errors={status?.activeGraph?.compileErrors}
-                </div>
-            </div>
+            {/* ===== MAIN EDITOR 3-COLUMN ===== */}
+            <div className="plc-editor">
+                {/* LEFT: Block Library + Templates (минимально) */}
+                <aside className="plc-panel">
+                    <div className="plc-panel__hdr">
+                        <h3>Block Library</h3>
+                    </div>
 
-            <div style={{ marginTop: 8, display: "flex", gap: 10, alignItems: "center" }}>
-                <span style={{ fontWeight: 700 }}>Sync:</span>
+                    <div className="plc-panel__body" style={{ display: "grid", gap: 12 }}>
+                        <BlockLibrary
+                            onPickNode={(type) => createNode(type, { x: 120, y: 120 })}
+                        />
 
-                {!built ? (
-                    <span style={{ padding: "2px 8px", borderRadius: 999, background: "#fee2e2", color: "#991b1b", fontWeight: 800 }}>
-            INVALID
-        </span>
-                ) : !activeSha ? (
-                    <span style={{ padding: "2px 8px", borderRadius: 999, background: "#f3f4f6", color: "#374151", fontWeight: 800 }}>
-            NO ACTIVE
-        </span>
-                ) : editorSha && editorSha === activeSha ? (
-                    <span style={{ padding: "2px 8px", borderRadius: 999, background: "#dcfce7", color: "#166534", fontWeight: 800 }}>
-            MATCH
-        </span>
-                ) : (
-                    <span style={{ padding: "2px 8px", borderRadius: 999, background: "#ffedd5", color: "#9a3412", fontWeight: 800 }}>
-            DIRTY
-        </span>
-                )}
+                        {/* Оставляем debug-переключатели внизу слева */}
+                        <div style={{ marginTop: 8, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,.08)" }}>
+                            <label style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                                <input type="checkbox" checked={showBuiltJson} onChange={(e) => setShowBuiltJson(e.target.checked)} />
+                                <span style={{ color: "var(--muted)", fontSize: 12, fontWeight: 900 }}>show built JSON</span>
+                            </label>
 
-                {shaErr && (
-                    <span style={{ color: "#991b1b", fontSize: 12 }}>
-            hash error: {shaErr}
-        </span>
-                )}
-            </div>
+                            <label style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 6 }}>
+                                <input type="checkbox" checked={showWires} onChange={(e) => setShowWires(e.target.checked)} />
+                                <span style={{ color: "var(--muted)", fontSize: 12, fontWeight: 900 }}>debug wires</span>
+                            </label>
+                        </div>
+                    </div>
 
+                </aside>
 
-            <div style={{ marginTop: 12, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-                <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <span style={{ fontWeight: 700 }}>cycleMs</span>
-                    <input value={cycleMs} onChange={(e) => setCycleMs(e.target.value)} style={{ width: 90, padding: 6 }} />
-                </label>
-
-                <button onClick={() => setNodes((p) => [...p, defaultNode(nextLocalId(p))])} style={{ padding: "8px 12px" }}>
-                    + Add node
-                </button>
-
-                <button onClick={onUpload} disabled={busy != null} style={{ padding: "8px 12px" }}>
-                    {busy === "upload" ? "Uploading..." : "Upload (stage)"}
-                </button>
-
-                <button onClick={onActivate} disabled={busy != null} style={{ padding: "8px 12px" }}>
-                    {busy === "activate" ? "Activating..." : "Activate"}
-                </button>
-
-                <button onClick={onLoadActive} disabled={busy != null} style={{ padding: "8px 12px" }}>
-                    {busy === "loadActive" ? "Loading..." : "Load active"}
-                </button>
-
-                <button
-                    onClick={() => {
-                        try {
-                            setNodes((prev) => autoLayout(prev, wires))
-                        } catch (e) {
-                            setLastResp({ ok: false, error: e instanceof Error ? e.message : String(e) })
-                        }
-                    }}
-                    style={{ padding: "8px 12px" }}
-                >
-                    Auto layout
-                </button>
-
-                <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <input type="checkbox" checked={showCanvas} onChange={(e) => setShowCanvas(e.target.checked)} />
-                    <span style={{ fontSize: 12, opacity: 0.8 }}>canvas</span>
-                </label>
-
-                <button onClick={() => exportProjectFile({ version: 2, cycleMs, nodes, wires })}>Export</button>
-
-                <label style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
-                    <span style={{ fontSize: 12, opacity: 0.8 }}>Import</span>
-                    <input
-                        type="file"
-                        accept="application/json,.json"
-                        onChange={async (e) => {
-                            const f = e.target.files?.[0]
-                            if (!f) return
-                            try {
-                                const p = await importProjectFile(f)
-                                setCycleMs(p.cycleMs)
-                                setNodes(p.nodes)
-                                setWires(p.wires ?? [])
-                                setSelectedNodeId(null)
-                            } finally {
-                                e.currentTarget.value = ""
-                            }
-                        }}
+                {/* CENTER: Canvas */}
+                <main className="plc-canvas">
+                    <ReactFlowProvider>
+                    <GraphFlow
+                        nodes={nodes}
+                        wires={wires}
+                        selectedNodeId={selectedNodeId}
+                        onSelectNode={setSelectedNodeId}
+                        onNodesChange={(patch) => setNodes((prev) => patch(prev))}
+                        upsertWire={upsertWire}
+                        deleteWire={deleteWire}
+                        nodeStateById={nodeStateById}
+                        onForceDo={forceDo}
+                        onReleaseDo={releaseDo}
+                        onCreateNode={createNode}
                     />
-                </label>
+                    </ReactFlowProvider>
+                </main>
 
-                <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <span style={{ fontSize: 12, opacity: 0.8 }}>Template</span>
-                    <select value={tpl} onChange={(e) => setTpl(e.target.value as TemplateId)} style={{ padding: 6 }}>
-                        <option value="DI_TON_DO">DI → TON → DO</option>
-                        <option value="DI_DO">DI → DO</option>
-                        <option value="BLINK">Blink (HEARTBEAT → TP → DO)</option>
-                    </select>
-                    <button onClick={insertTemplate} style={{ padding: "8px 12px" }}>
-                        Insert
-                    </button>
-                </label>
+                {/* RIGHT: Properties */}
+                <aside className="plc-panel">
+                    <div className="plc-panel__hdr">
+                        <h3>Properties</h3>
+                    </div>
 
-                <label style={{ display: "flex", gap: 8, alignItems: "center", marginLeft: "auto" }}>
-                    <input type="checkbox" checked={showBuiltJson} onChange={(e) => setShowBuiltJson(e.target.checked)} />
-                    <span style={{ fontSize: 12, opacity: 0.8 }}>show built JSON</span>
-                </label>
+                    <div className="plc-panel__body">
 
-                <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <input type="checkbox" checked={showWires} onChange={(e) => setShowWires(e.target.checked)} />
-                    <span style={{ fontSize: 12, opacity: 0.8 }}>debug wires</span>
-                </label>
+                        <PropertiesPanel
+                            selectedNode={selectedNode}
+                            nodeState={selectedNode ? nodeStateById.get(selectedNode.localId) ?? null : null}
+                            nodeStateById={nodeStateById}
+                            onApply={(id, patch) => updateNode(id, patch)}
+                            onDelete={(id) => removeNode(id)}
+                        />
+                    </div>
+                </aside>
             </div>
 
+            {/* ===== OPTIONAL: Validation Errors ===== */}
             {errs.length > 0 && (
-                <div style={{ marginTop: 12, padding: 12, borderRadius: 10, background: "#fff7ed", border: "1px solid #fed7aa" }}>
-                    <div style={{ fontWeight: 700, marginBottom: 6 }}>Validation errors</div>
+                <div style={{ marginTop: 14, padding: 14, borderRadius: 14, border: "1px solid rgba(245,158,11,.35)", background: "rgba(245,158,11,.10)" }}>
+                    <div style={{ fontWeight: 900, marginBottom: 8 }}>Validation errors</div>
                     <ul style={{ margin: 0, paddingLeft: 18 }}>
                         {errs.map((e, idx) => (
-                            <li key={idx} style={{ fontFamily: "ui-monospace, monospace", fontSize: 12 }}>
+                            <li key={idx} style={{ fontFamily: "var(--mono)", fontSize: 12 }}>
                                 {errToText(e)}
                             </li>
                         ))}
@@ -650,236 +675,109 @@ export function GraphPage() {
                 </div>
             )}
 
-            <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: showCanvas ? "1fr 320px" : "1fr", gap: 12, alignItems: "start" }}>
-                <div>
-                    <div style={{ fontWeight: 700, marginBottom: 8 }}>Graph</div>
-
-                    {showCanvas && (
-                        <GraphFlow
-                            nodes={nodes}
-                            wires={wires}
-                            selectedNodeId={selectedNodeId}
-                            onSelectNode={setSelectedNodeId}
-                            onNodesChange={(patch) => setNodes((prev) => patch(prev))}
-                            upsertWire={upsertWire}
-                            deleteWire={deleteWire}
-                            nodeStateById={nodeStateById}
-                            onForceDo={forceDo}
-                            onReleaseDo={releaseDo}
-                        />
-                    )}
-                </div>
-
-                {/* Property panel */}
-                {showCanvas && (
-                    <div style={{ border: "1px solid #e5e7eb", borderRadius: 10, overflow: "hidden" }}>
-                        <div style={{ background: "#f9fafb", padding: 10, fontWeight: 700 }}>Properties</div>
-                        {selectedNode ? (
-                            <div style={{ padding: 10, display: "grid", gap: 10 }}>
-                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                                    <div style={{ fontWeight: 800 }}>#{selectedNode.localId}</div>
-                                    <div style={{ opacity: 0.8, fontFamily: "ui-monospace, monospace", fontSize: 12 }}>{selectedNode.type}</div>
-                                </div>
-
-                                <label style={{ display: "grid", gap: 6 }}>
-                                    <div style={{ fontSize: 12, opacity: 0.8 }}>type</div>
-                                    <select
-                                        value={selectedNode.type}
-                                        onChange={(e) => {
-                                            const newType = e.target.value as NodeType
-                                            const newSpec = NODE_SPEC[newType]
-                                            const hideB2 = newSpec?.ports?.hideB ?? false
-                                            const expected = newSpec?.expectedValueType
-                                            updateNode(selectedNode.localId, {
-                                                type: newType,
-                                                ...(hideB2 ? { inB: -1 } : {}),
-                                                ...(expected != null ? { valueType: expected } : {}),
-                                            })
-                                        }}
-                                        style={{ padding: 8 }}
-                                    >
-                                        {NODE_TYPES.map((t) => (
-                                            <option key={t} value={t}>
-                                                {t}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </label>
-
-                                <label style={{ display: "grid", gap: 6 }}>
-                                    <div style={{ fontSize: 12, opacity: 0.8 }}>valueType</div>
-                                    <select value={selectedNode.valueType} onChange={(e) => updateNode(selectedNode.localId, { valueType: Number(e.target.value) as 0 | 1 | 2 })} style={{ padding: 8 }}>
-                                        <option value={0}>BOOL</option>
-                                        <option value={1}>INT</option>
-                                        <option value={2}>REAL</option>
-                                    </select>
-                                </label>
-
-                                {(() => {
-                                    const spec: ParamSpec = NODE_SPEC[selectedNode.type] ?? DEFAULT_SPEC
-                                    const showInt = spec.showInt ?? true
-                                    const showFloat = spec.showFloat ?? true
-                                    const showMs = spec.showMs ?? true
-                                    const showFlags = spec.showFlags ?? true
-
-                                    return (
-                                        <>
-                                            {showInt && (
-                                                <label style={{ display: "grid", gap: 6 }}>
-                                                    <div style={{ fontSize: 12, opacity: 0.8 }}>{spec.intLabel ?? "paramInt"}</div>
-                                                    <input value={selectedNode.paramInt} onChange={(e) => updateNode(selectedNode.localId, { paramInt: e.target.value })} style={{ padding: 8 }} />
-                                                </label>
-                                            )}
-
-                                            {showFloat && (
-                                                <label style={{ display: "grid", gap: 6 }}>
-                                                    <div style={{ fontSize: 12, opacity: 0.8 }}>{spec.floatLabel ?? "paramFloat"}</div>
-                                                    <input value={selectedNode.paramFloat} onChange={(e) => updateNode(selectedNode.localId, { paramFloat: e.target.value })} style={{ padding: 8 }} />
-                                                </label>
-                                            )}
-
-                                            {showMs && (
-                                                <div style={{ display: "grid", gap: 6 }}>
-                                                    <div style={{ fontSize: 12, opacity: 0.8 }}>{spec.msLabel ?? "paramMs"}</div>
-                                                    <input value={selectedNode.paramMs} onChange={(e) => updateNode(selectedNode.localId, { paramMs: e.target.value })} style={{ padding: 8 }} />
-
-                                                    {/* presets для таймера */}
-                                                    {["TON", "TOFF", "TP"].includes(selectedNode.type) && (
-                                                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                                                            <button onClick={() => applyPresetMs(100)} style={{ padding: "6px 10px" }}>100</button>
-                                                            <button onClick={() => applyPresetMs(500)} style={{ padding: "6px 10px" }}>500</button>
-                                                            <button onClick={() => applyPresetMs(1000)} style={{ padding: "6px 10px" }}>1000</button>
-                                                            <button onClick={() => applyPresetMs(3000)} style={{ padding: "6px 10px" }}>3000</button>
-                                                            <button onClick={() => applyPresetMs(10000)} style={{ padding: "6px 10px" }}>10000</button>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            )}
-
-                                            {showFlags && (
-                                                <label style={{ display: "grid", gap: 6 }}>
-                                                    <div style={{ fontSize: 12, opacity: 0.8 }}>{spec.flagsLabel ?? "flags"}</div>
-                                                    <input value={selectedNode.flags} onChange={(e) => updateNode(selectedNode.localId, { flags: e.target.value })} style={{ padding: 8 }} />
-                                                </label>
-                                            )}
-                                        </>
-                                    )
-                                })()}
-
-                                <div style={{ display: "flex", gap: 8 }}>
-                                    <button onClick={() => removeNode(selectedNode.localId)} style={{ padding: "8px 12px" }}>
-                                        Delete node
-                                    </button>
-                                </div>
-                            </div>
-                        ) : (
-                            <div style={{ padding: 10, opacity: 0.7, fontSize: 12 }}>Выбери ноду на canvas</div>
-                        )}
-                    </div>
-                )}
-            </div>
-
-            {/* Debug wires table */}
+            {/* ===== DEV PANELS (оставляем как было) ===== */}
             {showWires && (
-                <div style={{ marginTop: 12, border: "1px solid #e5e7eb", borderRadius: 10, overflow: "hidden" }}>
-                    <div style={{ background: "#f9fafb", padding: 10, fontWeight: 700, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <span>Wires</span>
-                        <button
-                            onClick={() => {
-                                const all = nodes.map((n) => n.localId).sort((a, b) => a - b)
-                                const fromNode = all[0] ?? 0
-                                const toNode = all[1] ?? all[0] ?? 0
-                                upsertWire(fromNode, toNode, "A")
-                            }}
+                <div style={{ marginTop: 14 }}>
+                    <div style={{ marginTop: 12, border: "1px solid #e5e7eb", borderRadius: 10, overflow: "hidden" }}>
+                        <div style={{ background: "#f9fafb", padding: 10, fontWeight: 700, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <span>Wires</span>
+                            <button
+                                onClick={() => {
+                                    const all = nodes.map((n) => n.localId).sort((a, b) => a - b)
+                                    const fromNode = all[0] ?? 0
+                                    const toNode = all[1] ?? all[0] ?? 0
+                                    upsertWire(fromNode, toNode, "A")
+                                }}
 
-                            style={{ padding: "6px 10px" }}
-                        >
-                            + Add wire
-                        </button>
-                    </div>
+                                style={{ padding: "6px 10px" }}
+                            >
+                                + Add wire
+                            </button>
+                        </div>
 
-                    <div style={{ display: "grid", gridTemplateColumns: "120px 120px 90px 90px", gap: 0 }}>
-                        <HeaderCell>fromNode</HeaderCell>
-                        <HeaderCell>toNode</HeaderCell>
-                        <HeaderCell>toPort</HeaderCell>
-                        <HeaderCell>actions</HeaderCell>
+                        <div style={{ display: "grid", gridTemplateColumns: "120px 120px 90px 90px", gap: 0 }}>
+                            <HeaderCell>fromNode</HeaderCell>
+                            <HeaderCell>toNode</HeaderCell>
+                            <HeaderCell>toPort</HeaderCell>
+                            <HeaderCell>actions</HeaderCell>
 
-                        {wires.map((w, idx) => (
-                            <>
-                                <Cell key={`from-${idx}`}>
-                                    <select
-                                        value={w.fromNode}
-                                        onChange={(e) => {
-                                            const v = Number(e.target.value)
-                                            setWires((p) => p.map((x, i) => (i === idx ? { ...x, fromNode: v } : x)))
-                                        }}
-                                        style={{ width: "100%", padding: 6, fontSize: 12 }}
-                                    >
-                                        {allNodeIds.map((id) => (
-                                            <option key={id} value={id}>
-                                                {id}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </Cell>
+                            {wires.map((w, idx) => (
+                                <>
+                                    <Cell key={`from-${idx}`}>
+                                        <select
+                                            value={w.fromNode}
+                                            onChange={(e) => {
+                                                const v = Number(e.target.value)
+                                                setWires((p) => p.map((x, i) => (i === idx ? { ...x, fromNode: v } : x)))
+                                            }}
+                                            style={{ width: "100%", padding: 6, fontSize: 12 }}
+                                        >
+                                            {allNodeIds.map((id) => (
+                                                <option key={id} value={id}>
+                                                    {id}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </Cell>
 
-                                <Cell key={`to-${idx}`}>
-                                    <select
-                                        value={w.toNode}
-                                        onChange={(e) => {
-                                            const v = Number(e.target.value)
-                                            setWires((p) => p.map((x, i) => (i === idx ? { ...x, toNode: v } : x)))
-                                        }}
-                                        style={{ width: "100%", padding: 6, fontSize: 12 }}
-                                    >
-                                        {allNodeIds.map((id) => (
-                                            <option key={id} value={id}>
-                                                {id}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </Cell>
+                                    <Cell key={`to-${idx}`}>
+                                        <select
+                                            value={w.toNode}
+                                            onChange={(e) => {
+                                                const v = Number(e.target.value)
+                                                setWires((p) => p.map((x, i) => (i === idx ? { ...x, toNode: v } : x)))
+                                            }}
+                                            style={{ width: "100%", padding: 6, fontSize: 12 }}
+                                        >
+                                            {allNodeIds.map((id) => (
+                                                <option key={id} value={id}>
+                                                    {id}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </Cell>
 
-                                <Cell key={`port-${idx}`}>
-                                    <select
-                                        value={w.toPort}
-                                        onChange={(e) => {
-                                            const v = e.target.value as "A" | "B"
-                                            setWires((p) => p.map((x, i) => (i === idx ? { ...x, toPort: v } : x)))
-                                        }}
-                                        style={{ width: "100%", padding: 6, fontSize: 12 }}
-                                    >
-                                        <option value="A">A</option>
-                                        <option value="B">B</option>
-                                    </select>
-                                </Cell>
+                                    <Cell key={`port-${idx}`}>
+                                        <select
+                                            value={w.toPort}
+                                            onChange={(e) => {
+                                                const v = e.target.value as "A" | "B"
+                                                setWires((p) => p.map((x, i) => (i === idx ? { ...x, toPort: v } : x)))
+                                            }}
+                                            style={{ width: "100%", padding: 6, fontSize: 12 }}
+                                        >
+                                            <option value="A">A</option>
+                                            <option value="B">B</option>
+                                        </select>
+                                    </Cell>
 
-                                <Cell key={`act-${idx}`}>
-                                    <button onClick={() => setWires((p) => p.filter((_, i) => i !== idx))} style={{ padding: "6px 10px" }}>
-                                        Delete
-                                    </button>
-                                </Cell>
-                            </>
-                        ))}
+                                    <Cell key={`act-${idx}`}>
+                                        <button onClick={() => setWires((p) => p.filter((_, i) => i !== idx))} style={{ padding: "6px 10px" }}>
+                                            Delete
+                                        </button>
+                                    </Cell>
+                                </>
+                            ))}
+                        </div>
                     </div>
                 </div>
             )}
 
             {showBuiltJson && (
-                <pre style={{ marginTop: 12, background: "#111", color: "#ddd", padding: 12, borderRadius: 10, overflow: "auto" }}>
-                    {builtJson}
-                </pre>
+                <pre style={{ marginTop: 14, background: "rgba(0,0,0,.35)", color: "#dbe7ff", padding: 14, borderRadius: 14, overflow: "auto", border: "1px solid rgba(50,64,92,.65)" }}>
+        {builtJson}
+      </pre>
             )}
 
-            <div style={{ marginTop: 12 }}>
-                <div style={{ fontWeight: 700 }}>Last response</div>
-                <pre style={{ marginTop: 8, background: "#f3f4f6", padding: 12, borderRadius: 10, overflow: "auto" }}>
-                    {lastResp == null ? "—" : JSON.stringify(lastResp, null, 2)}
-                </pre>
+            <div style={{ marginTop: 14 }}>
+                <div style={{ fontWeight: 900 }}>Last response</div>
+                <pre style={{ marginTop: 10, background: "rgba(0,0,0,.25)", padding: 14, borderRadius: 14, overflow: "auto", border: "1px solid rgba(50,64,92,.65)" }}>
+        {lastResp == null ? "—" : JSON.stringify(lastResp, null, 2)}
+      </pre>
             </div>
 
-            {/* Nodes table (оставляю как было — полезно для диагностики) */}
-            <div style={{ marginTop: 12, border: "1px solid #e5e7eb", borderRadius: 10, overflow: "hidden" }}>
+            {/* Nodes table — можно оставить 1:1 как у тебя (ниже) */}
+            <div style={{ marginTop: 14 }}>
                 <div style={{ background: "#f9fafb", padding: 10, fontWeight: 700 }}>Nodes</div>
 
                 <div style={{ display: "grid", gridTemplateColumns: "90px 170px 90px 120px 120px 110px 110px 110px 90px 90px", gap: 0 }}>
@@ -924,6 +822,7 @@ export function GraphPage() {
             </div>
         </div>
     )
+
 }
 
 function HeaderCell({ children }: { children: React.ReactNode }) {

@@ -2,18 +2,19 @@ import {
     ReactFlow,
     Background,
     Controls,
-    MiniMap,
     Handle,
     Position,
     type Node,
     type Edge,
     type Connection,
-    type NodeTypes,
+    type NodeTypes, useReactFlow,
 } from "@xyflow/react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import type { EditorNodeUi, WireUi } from "./editorTypes"
 import { NODE_SPEC } from "./nodeUiSpec"
 import type { PlcNodeState } from "../plc.types"
+import type {NodeType} from "./nodeCatalog.ts";
+import { ReactFlowProvider } from "@xyflow/react"
 
 /* ================= TYPES ================= */
 
@@ -30,6 +31,9 @@ type Props = {
     // ПКМ меню
     onForceDo: (nodeId: number, desired: boolean, holdMs: number) => Promise<void>
     onReleaseDo: (nodeId: number) => Promise<void>
+
+    onCreateNode?: (type: NodeType, pos: { x: number; y: number }) => void
+
 }
 
 type PlcNodeData = {
@@ -58,21 +62,6 @@ function classify(type: string): Kind {
     return "OTHER"
 }
 
-function palette(k: Kind) {
-    switch (k) {
-        case "IN":
-            return { bar: "#2563eb", bg: "#eff6ff", badge: "#dbeafe", text: "#1d4ed8" }
-        case "OUT":
-            return { bar: "#16a34a", bg: "#f0fdf4", badge: "#dcfce7", text: "#166534" }
-        case "TIMER":
-            return { bar: "#f59e0b", bg: "#fffbeb", badge: "#fef3c7", text: "#92400e" }
-        case "LOGIC":
-            return { bar: "#7c3aed", bg: "#f5f3ff", badge: "#ede9fe", text: "#5b21b6" }
-        default:
-            return { bar: "#9ca3af", bg: "#f9fafb", badge: "#f3f4f6", text: "#374151" }
-    }
-}
-
 function vtLabel(vt: number): "BOOL" | "INT" | "REAL" {
     if (vt === 0) return "BOOL"
     if (vt === 1) return "INT"
@@ -99,94 +88,65 @@ function PlcNodeView({ data }: { data: PlcNodeData }) {
     const ports = spec?.ports ?? {}
     const hideB = ports.hideB ?? false
 
-    const kind = classify(node.type)
-    const c = palette(kind)
 
     return (
-        <div
-            style={{
-                width: 180,
-                borderRadius: 10,
-                border: selected ? "2px solid #111827" : "1px solid #d1d5db",
-                background: "#fff",
-                boxShadow: selected ? "0 6px 18px rgba(0,0,0,0.18)" : "0 1px 2px rgba(0,0,0,0.06)",
-                fontFamily: "system-ui",
-                position: "relative",
-            }}
-        >
-            <div style={{ height: 4, background: c.bar }} />
-
-            <Handle id="A" type="target" position={Position.Left} style={{ top: 28 }} />
-            {!hideB && <Handle id="B" type="target" position={Position.Left} style={{ top: 52 }} />}
-            <Handle id="OUT" type="source" position={Position.Right} style={{ top: 40 }} />
-
-            <div style={{ position: "absolute", right: -2, top: 34, fontSize: 9, fontWeight: 800, color: "#6b7280" }}>
-                OUT
+        <div className={`plc-node ${selected ? "plc-node--selected" : ""}`}>
+            <div className="plc-node__hdr">
+                <div className="plc-node__name">{node.type}</div>
+                <div className="plc-node__sub">
+                    <span className="plc-node__badge">{vtLabel(node.valueType)}</span>
+                </div>
             </div>
 
-            <div style={{ padding: "6px 8px", background: c.bg }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                    <div style={{ fontWeight: 800, fontSize: 11 }}>
-                        #{node.localId} {node.type}
+            <Handle
+                className="plc-handle plc-handle--in plc-handle--a"
+                id="A"
+                type="target"
+                position={Position.Left}
+            />
+
+            {!hideB && (
+                <Handle
+                    className="plc-handle plc-handle--in plc-handle--b"
+                    id="B"
+                    type="target"
+                    position={Position.Left}
+                />
+            )}
+
+            <Handle
+                className="plc-handle plc-handle--out"
+                id="OUT"
+                type="source"
+                position={Position.Right}
+            />
+
+
+            <div className="plc-node__rows">
+                <div className="plc-row">
+                    <div className="plc-row__left">
+                        <span className="plc-row__tag">IN</span>
+                        <span>{formatRuntime(node.valueType, runtime) === "TRUE" ? "TRUE" : "FALSE"}</span>
                     </div>
-                    <span
-                        style={{
-                            fontSize: 10,
-                            padding: "2px 6px",
-                            borderRadius: 999,
-                            background: c.badge,
-                            color: c.text,
-                            fontWeight: 800,
-                        }}
-                    >
-                        {kind === "TIMER" ? "⏱ " : ""}
-                        {kind}
-                    </span>
+                    <div className="plc-row__val">{vtLabel(node.valueType)}</div>
                 </div>
 
-                {/* runtime */}
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
-                    <span
-                        style={{
-                            fontSize: 10,
-                            padding: "2px 6px",
-                            borderRadius: 999,
-                            border: "1px solid #e5e7eb",
-                        }}
-                    >
-                        {vtLabel(node.valueType)}
-                    </span>
-
-                    <span
-                        style={{
-                            fontFamily: "ui-monospace, monospace",
-                            fontSize: 12,
-                            fontWeight: 700,
-                        }}
-                    >
-                        {formatRuntime(node.valueType, runtime)}
-                    </span>
-
-                    {runtime?.forceActive && (
-                        <span
-                            style={{
-                                marginLeft: "auto",
-                                fontSize: 10,
-                                padding: "2px 6px",
-                                borderRadius: 999,
-                                border: "1px solid #fca5a5",
-                                background: "#fef2f2",
-                                color: "#991b1b",
-                                fontWeight: 800,
-                            }}
-                        >
-                            FORCE
-                        </span>
-                    )}
-                </div>
+                {classify(node.type) === "TIMER" && (
+                    <>
+                        <div className="plc-row">
+                            <div className="plc-row__left"><span className="plc-row__tag">PT</span><span>INT</span></div>
+                            <div className="plc-row__val">{node.paramMs} ms</div>
+                        </div>
+                        <div className="plc-row">
+                            <div className="plc-row__left"><span className="plc-row__tag">Q</span><span>BOOL</span></div>
+                            <div className="plc-row__val">{runtime?.outBool ? "TRUE" : "FALSE"}</div>
+                        </div>
+                    </>
+                )}
             </div>
         </div>
     )
+
 }
 
 /* ================= FLOW ================= */
@@ -218,6 +178,7 @@ export function GraphFlow(props: Props) {
             sourceHandle: "OUT",
             target: String(w.toNode),
             targetHandle: w.toPort,
+            style: { stroke: "rgba(47,125,246,.95)" },
         }))
     }, [props.wires])
 
@@ -359,6 +320,22 @@ export function GraphFlow(props: Props) {
         }
     }, [ctx, canForce, ctxRuntime?.id, props, closeCtx])
 
+    const rf = useReactFlow()
+
+    const onDragOver = (e: React.DragEvent) => {
+        e.preventDefault()
+        e.dataTransfer.dropEffect = "move"
+    }
+
+    const onDrop = (e: React.DragEvent) => {
+        e.preventDefault()
+        const type = e.dataTransfer.getData("application/plc-node") as NodeType
+        if (!type) return
+
+        const pos = rf.screenToFlowPosition({ x: e.clientX, y: e.clientY })
+        props.onCreateNode?.(type, pos)
+    }
+
     return (
         <div style={{ height: 620, border: "1px solid #e5e7eb", borderRadius: 10, position: "relative" }}>
             <ReactFlow
@@ -374,10 +351,16 @@ export function GraphFlow(props: Props) {
                 fitView
                 snapToGrid
                 snapGrid={[20, 20]}
+                defaultEdgeOptions={{
+                    type: "smoothstep",
+                    style: { strokeWidth: 2 },
+                }}
+                onDragOver={onDragOver}
+                onDrop={onDrop}
             >
+
                 <Background />
                 <Controls />
-                <MiniMap />
             </ReactFlow>
 
             {/* Context menu */}
