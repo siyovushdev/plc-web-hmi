@@ -1,238 +1,381 @@
 import { useEffect, useMemo, useState } from "react"
-import type { EditorNodeUi } from "./editorTypes"
-import { NODE_TYPES, type NodeType } from "./nodeCatalog"
-import { NODE_SPEC, type ParamSpec } from "./nodeUiSpec"
-import type { PlcNodeState } from "../plc.types" // <-- лучше без .ts
-
-const DEFAULT_SPEC: ParamSpec = { showInt: true, showFloat: true, showMs: true, showFlags: true }
+import type { EditorNodeUi, WireUi } from "./editorTypes"
+import type { PlcNodeState } from "../plc.types"
+import { NODE_SPEC } from "./nodeUiSpec"
 
 type Props = {
     selectedNode: EditorNodeUi | null
     nodeState: PlcNodeState | null
     nodeStateById: Map<number, PlcNodeState>
-    onApply: (localId: number, patch: Partial<EditorNodeUi>) => void
-    onDelete: (localId: number) => void
+
+    // нужно для INPUTS (показывать подключения)
+    nodes: EditorNodeUi[]
+    wires: WireUi[]
+
+    onApply: (id: number, patch: Partial<EditorNodeUi>) => void
+    onDelete: (id: number) => void
 }
 
-export function PropertiesPanel({ selectedNode, nodeState, nodeStateById, onApply, onDelete }: Props) {
-    const [draft, setDraft] = useState<EditorNodeUi | null>(null)
+type VT = 0 | 1 | 2
 
-    useEffect(() => {
-        setDraft(selectedNode ? { ...selectedNode } : null)
-    }, [selectedNode?.localId]) // намеренно по id
+function vtLabel(vt: number): "BOOL" | "INT" | "REAL" {
+    if (vt === 0) return "BOOL"
+    if (vt === 1) return "INT"
+    return "REAL"
+}
 
-    const spec = useMemo(() => {
-        if (!draft) return DEFAULT_SPEC
-        return (NODE_SPEC[draft.type] ?? DEFAULT_SPEC) as ParamSpec
-    }, [draft?.type])
+function nodeCaption(n: EditorNodeUi) {
+    return `${n.type} (Node${n.localId})`
+}
 
-    if (!draft) {
-        return <div style={{ color: "var(--muted)", fontWeight: 900 }}>Выбери ноду на canvas</div>
-    }
+function fmtMs(ms: number | null | undefined) {
+    if (ms == null) return "—"
+    return `${ms} ms`
+}
 
-    const changed =
-        !!selectedNode &&
-        (draft.type !== selectedNode.type ||
-            draft.valueType !== selectedNode.valueType ||
-            draft.paramInt !== selectedNode.paramInt ||
-            draft.paramFloat !== selectedNode.paramFloat ||
-            draft.paramMs !== selectedNode.paramMs ||
-            draft.flags !== selectedNode.flags)
+function fmtReal(v: number | null | undefined) {
+    if (v == null) return "—"
+    return Number(v).toFixed(3)
+}
 
-    const showInt = spec.showInt ?? true
-    const showFloat = spec.showFloat ?? true
-    const showMs = spec.showMs ?? true
-    const showFlags = spec.showFlags ?? true
+function fmtBool(v: boolean | null | undefined) {
+    if (v == null) return "—"
+    return v ? "TRUE" : "FALSE"
+}
+
+function formatOut(vt: number, r: PlcNodeState | null): string {
+    if (!r) return "—"
+    if (vt === 0) return r.outBool ? "TRUE" : "FALSE"
+    if (vt === 1) return String(r.outInt ?? 0)
+    if (vt === 2) return r.outFloat == null ? "—" : Number(r.outFloat).toFixed(3)
+    return "—"
+}
+
+function isDigitalOut(type: string) {
+    return type === "DIGITAL_OUT"
+}
+
+export function PropertiesPanel(props: Props) {
+    const n = props.selectedNode
+    const spec = n ? NODE_SPEC[n.type] : undefined
+    const ports = spec?.ports ?? {}
+    const hideB = ports.hideB ?? false
+
+    // id -> node
+    const byId = useMemo(() => {
+        const m = new Map<number, EditorNodeUi>()
+        for (const x of props.nodes) m.set(x.localId, x)
+        return m
+    }, [props.nodes])
+
+    // входные подключения A/B
+    const inA = useMemo(() => {
+        if (!n) return null
+        return props.wires.find((w) => w.toNode === n.localId && w.toPort === "A") ?? null
+    }, [props.wires, n])
+
+    const inB = useMemo(() => {
+        if (!n) return null
+        return props.wires.find((w) => w.toNode === n.localId && w.toPort === "B") ?? null
+    }, [props.wires, n])
+
+    const inALabel = useMemo(() => {
+        if (!n || !inA) return "—"
+        const src = byId.get(inA.fromNode)
+        if (!src) return "—"
+        return `Node${src.localId}.OUT`
+    }, [n, inA, byId])
+
+    const inBLabel = useMemo(() => {
+        if (!n || !inB) return "—"
+        const src = byId.get(inB.fromNode)
+        if (!src) return "—"
+        return `Node${src.localId}.OUT`
+    }, [n, inB, byId])
+
+    // draft state (важно: параметры в EditorNodeUi — СТРОКИ)
+    const [valueType, setValueType] = useState<VT>(((n?.valueType ?? 0) as VT))
+    const [paramInt, setParamInt] = useState<string>(n?.paramInt ?? "0")
+    const [paramFloat, setParamFloat] = useState<string>(n?.paramFloat ?? "0")
+    const [paramMs, setParamMs] = useState<string>(n?.paramMs ?? "0")
+    const [flags, setFlags] = useState<string>(n?.flags ?? "0")
+
+
+
+
+    const dirty = useMemo(() => {
+        if (!n) return false
+        return (
+            valueType !== ((n.valueType ?? 0) as VT) ||
+            paramInt !== (n.paramInt ?? "0") ||
+            paramFloat !== (n.paramFloat ?? "0") ||
+            paramMs !== (n.paramMs ?? "0") ||
+            flags !== (n.flags ?? "0")
+        )
+    }, [n, valueType, paramInt, paramFloat, paramMs, flags])
 
     const apply = () => {
-        onApply(draft.localId, {
-            type: draft.type,
-            valueType: draft.valueType,
-            paramInt: draft.paramInt,
-            paramFloat: draft.paramFloat,
-            paramMs: draft.paramMs,
-            flags: draft.flags,
-        })
+        if (!n || n.localId == null) return
+        props.onApply(n.localId, { valueType, paramInt, paramFloat, paramMs, flags })
     }
 
-    const revert = () => setDraft(selectedNode ? { ...selectedNode } : null)
+    const revert = () => {
+        if (!n) return
+        setValueType((n.valueType ?? 0) as VT)
+        setParamInt(n.paramInt ?? "0")
+        setParamFloat(n.paramFloat ?? "0")
+        setParamMs(n.paramMs ?? "0")
+        setFlags(n.flags ?? "0")
+    }
 
-    // --- INPUTS как в PLC: берем значения из узлов, подключенных в inA/inB ---
-    const inAState = draft.inA >= 0 ? nodeStateById.get(draft.inA) ?? null : null
-    const inBState = draft.inB >= 0 ? nodeStateById.get(draft.inB) ?? null : null
+
+    if (!n) {
+        return (
+            <div className="plc-props" style={{ opacity: 0.8 }}>
+                <div className="plc-props__cap">PROPERTIES</div>
+                <div style={{ padding: 12, color: "rgba(255,255,255,.6)" }}>Выбери ноду на канвасе</div>
+            </div>
+        )
+    }
+
+    const runtime = props.nodeState
+
+    // runtime строго по типу
+    const showRuntimeTON = n.type === "TON"
+    const showRuntimeTOFF = n.type === "TOFF"
+    const showRuntimeTP = n.type === "TP"
+    const showRuntimePID = n.type === "PID"
+
+    const showAnyRuntime = showRuntimeTON || showRuntimeTOFF || showRuntimeTP || showRuntimePID
+    const showAnyParams = !!(spec?.showInt || spec?.showFloat || spec?.showMs || spec?.showFlags)
 
     return (
         <div className="plc-props">
+            {/* HEADER */}
             <div className="plc-props__title">
                 <div>
                     <div className="plc-props__cap">NODE:</div>
-                    <div className="plc-props__name">
-                        {draft.type} <span style={{ opacity: 0.65, fontWeight: 900 }}> (Node{draft.localId})</span>
-                    </div>
+                    <div className="plc-props__name">{nodeCaption(n)}</div>
                 </div>
                 <div className="plc-props__id">
                     <div className="plc-props__cap">ID</div>
-                    <div className="plc-props__val">{draft.localId}</div>
+                    <div className="plc-props__val">{n.localId}</div>
                 </div>
             </div>
 
-            <Section title="GENERAL">
-                <Field label="Type">
-                    <select
-                        className="plc-select"
-                        value={draft.type}
-                        onChange={(e) => {
-                            const newType = e.target.value as NodeType
-                            const expected = NODE_SPEC[newType]?.expectedValueType
-                            setDraft((p) =>
-                                !p
-                                    ? p
-                                    : {
-                                        ...p,
-                                        type: newType,
-                                        ...(expected != null ? { valueType: expected as 0 | 1 | 2 } : {}),
-                                        ...(NODE_SPEC[newType]?.ports?.hideB ? { inB: -1 } : {}),
-                                    }
-                            )
-                        }}
-                    >
-                        {NODE_TYPES.map((t) => (
-                            <option key={t} value={t}>
-                                {t}
-                            </option>
-                        ))}
-                    </select>
-                </Field>
-
-                <Field label="Value Type">
-                    <select
-                        className="plc-select"
-                        value={draft.valueType}
-                        onChange={(e) => setDraft((p) => (p ? { ...p, valueType: Number(e.target.value) as 0 | 1 | 2 } : p))}
-                    >
+            {/* VALUE TYPE (селект под заголовком) */}
+            <div className="plc-props-sec">
+                <div className="plc-props-sec__hdr">VALUE TYPE</div>
+                <div className="plc-props-sec__body">
+                    <select className="plc-select" value={valueType} onChange={(e) => setValueType(Number(e.target.value) as VT)}>
                         <option value={0}>BOOL</option>
                         <option value={1}>INT</option>
                         <option value={2}>REAL</option>
                     </select>
-                </Field>
-            </Section>
+                </div>
+            </div>
 
-            <Section title="INPUTS">
-                <KvRow k="A" v={fmtTypedValue(inAState)} />
-                <KvRow k="B" v={fmtTypedValue(inBState)} />
-            </Section>
+            {/* INPUTS (A/B + показываем подключение NodeX.OUT) */}
+            <div className="plc-props-sec">
+                <div className="plc-props-sec__hdr">INPUTS</div>
+                <div className="plc-props-sec__body">
+                    <div className="plc-kv">
+                        <div className="plc-kv__k">{ports.a ?? "A"}</div>
+                        <div className="plc-kv__v">{inALabel}</div>
+                    </div>
 
-            <Section title="OUTPUTS">
-                <KvRow k="OUT" v={fmtTypedValue(nodeState)} />
-                <KvRow k="FORCE" v={nodeState?.forceActive ? "ON" : "OFF"} />
-                <KvRow k="F_VAL" v={fmtBoolMaybe(nodeState?.forceValue)} />
-                <KvRow k="F_LEFT" v={fmtMsMaybe(nodeState?.forceLeftMs)} />
-            </Section>
+                    {!hideB && (
+                        <div className="plc-kv">
+                            <div className="plc-kv__k">{ports.b ?? "B"}</div>
+                            <div className="plc-kv__v">{inBLabel}</div>
+                        </div>
+                    )}
+                </div>
+            </div>
 
-            <Section title="RUNTIME">
-                <KvRow k="TON" v={fmtMsMaybe(nodeState?.tonMs)} />
-                <KvRow k="TOFF_LEFT" v={fmtMsMaybe(nodeState?.toffLeftMs)} />
-                <KvRow k="PID_SP" v={fmtNumberMaybe(nodeState?.pidSp)} />
-                <KvRow k="PID_PV" v={fmtNumberMaybe(nodeState?.pidPv)} />
-                <KvRow k="PID_I" v={fmtNumberMaybe(nodeState?.pidI)} />
-                <KvRow k="PID_U" v={fmtNumberMaybe(nodeState?.pidU)} />
-            </Section>
+            {/* OUTPUTS */}
+            <div className="plc-props-sec">
+                <div className="plc-props-sec__hdr">OUTPUTS</div>
+                <div className="plc-props-sec__body">
+                    <div className="plc-kv">
+                        <div className="plc-kv__k">OUT</div>
+                        <div className="plc-kv__v">
+                            {vtLabel(valueType)} {formatOut(valueType, runtime)}
+                        </div>
+                    </div>
 
-            <Section title="PARAMETERS">
-                {showInt && (
-                    <Field label={spec.intLabel ?? "paramInt"}>
-                        <input className="plc-input" value={draft.paramInt} onChange={(e) => setDraft((p) => (p ? { ...p, paramInt: e.target.value } : p))} />
-                    </Field>
-                )}
-                {showFloat && (
-                    <Field label={spec.floatLabel ?? "paramFloat"}>
-                        <input className="plc-input" value={draft.paramFloat} onChange={(e) => setDraft((p) => (p ? { ...p, paramFloat: e.target.value } : p))} />
-                    </Field>
-                )}
-                {showMs && (
-                    <Field label={spec.msLabel ?? "paramMs"}>
-                        <input className="plc-input" value={draft.paramMs} onChange={(e) => setDraft((p) => (p ? { ...p, paramMs: e.target.value } : p))} />
-                    </Field>
-                )}
-                {showFlags && (
-                    <Field label={spec.flagsLabel ?? "flags"}>
-                        <input className="plc-input" value={draft.flags} onChange={(e) => setDraft((p) => (p ? { ...p, flags: e.target.value } : p))} />
-                    </Field>
-                )}
-            </Section>
+                    {/* FORCE только для DIGITAL_OUT */}
+                    {isDigitalOut(n.type) && (
+                        <>
+                            <div className="plc-kv">
+                                <div className="plc-kv__k">FORCE</div>
+                                <div className="plc-kv__v">{runtime?.forceActive ? "ON" : "OFF"}</div>
+                            </div>
 
+                            <div className="plc-kv">
+                                <div className="plc-kv__k">F_VAL</div>
+                                <div className="plc-kv__v">{fmtBool((runtime as any)?.forceValue ?? null)}</div>
+                            </div>
+
+                            <div className="plc-kv">
+                                <div className="plc-kv__k">F_LEFT</div>
+                                <div className="plc-kv__v">{fmtMs((runtime as any)?.forceLeftMs ?? null)}</div>
+                            </div>
+                        </>
+                    )}
+                </div>
+            </div>
+
+            {/* RUNTIME строго по типу */}
+            {showAnyRuntime && (
+                <div className="plc-props-sec">
+                    <div className="plc-props-sec__hdr">RUNTIME</div>
+                    <div className="plc-props-sec__body">
+                        {showRuntimeTON && (
+                            <>
+                                <div className="plc-kv">
+                                    <div className="plc-kv__k">IN</div>
+                                    <div className="plc-kv__v">{fmtBool((runtime as any)?.inBool ?? null)}</div>
+                                </div>
+                                <div className="plc-kv">
+                                    <div className="plc-kv__k">PT</div>
+                                    <div className="plc-kv__v">{fmtMs(Number(n.paramMs || "0"))}</div>
+                                </div>
+                                <div className="plc-kv">
+                                    <div className="plc-kv__k">Q</div>
+                                    <div className="plc-kv__v">{fmtBool(runtime?.outBool ?? null)}</div>
+                                </div>
+                                <div className="plc-kv">
+                                    <div className="plc-kv__k">ET</div>
+                                    <div className="plc-kv__v">{fmtMs((runtime as any)?.tonMs ?? null)}</div>
+                                </div>
+                            </>
+                        )}
+
+                        {showRuntimeTOFF && (
+                            <>
+                                <div className="plc-kv">
+                                    <div className="plc-kv__k">Q</div>
+                                    <div className="plc-kv__v">{fmtBool(runtime?.outBool ?? null)}</div>
+                                </div>
+                                <div className="plc-kv">
+                                    <div className="plc-kv__k">LEFT</div>
+                                    <div className="plc-kv__v">{fmtMs((runtime as any)?.toffLeftMs ?? null)}</div>
+                                </div>
+                            </>
+                        )}
+
+                        {showRuntimeTP && (
+                            <>
+                                <div className="plc-kv">
+                                    <div className="plc-kv__k">Q</div>
+                                    <div className="plc-kv__v">{fmtBool(runtime?.outBool ?? null)}</div>
+                                </div>
+                                <div className="plc-kv">
+                                    <div className="plc-kv__k">LEFT</div>
+                                    <div className="plc-kv__v">{fmtMs((runtime as any)?.tpLeftMs ?? null)}</div>
+                                </div>
+                            </>
+                        )}
+
+                        {showRuntimePID && (
+                            <>
+                                <div className="plc-kv">
+                                    <div className="plc-kv__k">SP</div>
+                                    <div className="plc-kv__v">{fmtReal((runtime as any)?.pidSp ?? null)}</div>
+                                </div>
+                                <div className="plc-kv">
+                                    <div className="plc-kv__k">PV</div>
+                                    <div className="plc-kv__v">{fmtReal((runtime as any)?.pidPv ?? null)}</div>
+                                </div>
+                                <div className="plc-kv">
+                                    <div className="plc-kv__k">I</div>
+                                    <div className="plc-kv__v">{fmtReal((runtime as any)?.pidI ?? null)}</div>
+                                </div>
+                                <div className="plc-kv">
+                                    <div className="plc-kv__k">U</div>
+                                    <div className="plc-kv__v">{fmtReal((runtime as any)?.pidU ?? null)}</div>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* PARAMETERS (всегда 4 поля; NODE_SPEC — только подсказки) */}
+            <div className="plc-props-sec">
+                <div className="plc-props-sec__hdr">PARAMETERS</div>
+                <div className="plc-props-sec__body">
+
+                    <div className="plc-props-field">
+                        <div className="plc-props-field__lbl">
+                            paramInt{spec?.intLabel ? <span className="plc-props-field__hint"> — {spec.intLabel}</span> : null}
+                        </div>
+                        <input
+                            className="plc-input"
+                            type="text"
+                            value={paramInt}
+                            onChange={(e) => setParamInt(e.target.value)}
+                        />
+                    </div>
+
+                    <div className="plc-props-field">
+                        <div className="plc-props-field__lbl">
+                            paramFloat{spec?.floatLabel ? <span className="plc-props-field__hint"> — {spec.floatLabel}</span> : null}
+                        </div>
+                        <input
+                            className="plc-input"
+                            type="text"
+                            value={paramFloat}
+                            onChange={(e) => setParamFloat(e.target.value)}
+                        />
+                    </div>
+
+                    <div className="plc-props-field">
+                        <div className="plc-props-field__lbl">
+                            delayMs{spec?.msLabel ? <span className="plc-props-field__hint"> — {spec.msLabel}</span> : null}
+                        </div>
+                        <input
+                            className="plc-input"
+                            type="text"
+                            value={paramMs}
+                            onChange={(e) => setParamMs(e.target.value)}
+                        />
+                    </div>
+
+                    <div className="plc-props-field">
+                        <div className="plc-props-field__lbl">
+                            flags{spec?.flagsLabel ? <span className="plc-props-field__hint"> — {spec.flagsLabel}</span> : null}
+                        </div>
+                        <input
+                            className="plc-input"
+                            type="text"
+                            value={flags}
+                            onChange={(e) => setFlags(e.target.value)}
+                        />
+                    </div>
+
+                </div>
+            </div>
+
+
+            {/* ACTIONS */}
             <div className="plc-props__btns">
-                <button className="plc-btn plc-btn--ghost" onClick={revert} disabled={!changed}>
+                <button className="plc-btn plc-btn--ghost" disabled={!dirty} onClick={revert}>
                     Revert
                 </button>
-                <button className="plc-btn plc-btn--blue" onClick={apply} disabled={!changed}>
+                <button className="plc-btn plc-btn--blue" disabled={!dirty} onClick={apply}>
                     Apply
                 </button>
             </div>
 
-            <div style={{ marginTop: 10 }}>
-                <button className="plc-btn" onClick={() => onDelete(draft.localId)}>
-                    Delete node
-                </button>
-            </div>
+            <button
+                className="plc-btn"
+                style={{ borderColor: "rgba(239,68,68,.35)", background: "rgba(239,68,68,.10)" }}
+                onClick={() => props.onDelete(n.localId)}
+            >
+                Delete node
+            </button>
         </div>
     )
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-    return (
-        <div className="plc-props-sec">
-            <div className="plc-props-sec__hdr">{title}</div>
-            <div className="plc-props-sec__body">{children}</div>
-        </div>
-    )
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-    return (
-        <label className="plc-props-field">
-            <div className="plc-props-field__lbl">{label}</div>
-            {children}
-        </label>
-    )
-}
-
-function KvRow({ k, v }: { k: string; v: string }) {
-    return (
-        <div className="plc-kv">
-            <div className="plc-kv__k">{k}</div>
-            <div className="plc-kv__v">{v}</div>
-        </div>
-    )
-}
-
-// Форматирование "как PLC"
-function fmtTypedValue(s: PlcNodeState | null | undefined): string {
-    if (!s) return "—"
-
-    // valueType: 0=BOOL, 1=INT, 2=REAL (у тебя так же в editor)
-    if (s.valueType === 0) return s.outBool ? "TRUE" : "FALSE"
-    if (s.valueType === 1) return s.outInt == null ? "—" : String(s.outInt)
-    if (s.valueType === 2) return s.outFloat == null ? "—" : String(s.outFloat)
-
-    // если вдруг придет что-то новое
-    return "—"
-}
-
-function fmtBoolMaybe(v: unknown): string {
-    if (v === true) return "TRUE"
-    if (v === false) return "FALSE"
-    if (v === 1) return "TRUE"
-    if (v === 0) return "FALSE"
-    return "—"
-}
-
-function fmtMsMaybe(v: unknown): string {
-    if (typeof v === "number" && !Number.isNaN(v)) return `${v} ms`
-    return "—"
-}
-
-function fmtNumberMaybe(v: unknown): string {
-    if (typeof v === "number" && !Number.isNaN(v)) return String(v)
-    return "—"
 }

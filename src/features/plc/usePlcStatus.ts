@@ -35,13 +35,25 @@ export function usePlcStatus(pollMs = 1000) {
         }
     }, [pollMs, refresh])
 
+    // id (node.id) -> index in status.nodes[] (nodeIndex for STM32)
+    const getNodeIndex = useCallback(
+        (nodeId: number) => {
+            if (!status) throw new Error("No status yet")
+            const idx = status.nodes.findIndex((n) => n.id === nodeId)
+            if (idx < 0) throw new Error(`Node not found in status: id=${nodeId}`)
+            return idx
+        },
+        [status]
+    )
+
     const toggleDigitalOutNode = useCallback(
         async (node: PlcNodeState) => {
             if (node.type !== "DIGITAL_OUT") return
             setBusyNodeId(node.id)
             try {
                 const desired = !node.outBool
-                const ok = await forceOutput(node.id, desired, 0)
+                const nodeIndex = getNodeIndex(node.id) // <-- FIX
+                const ok = await forceOutput(nodeIndex, desired, 0) // <-- FIX
                 if (!ok) throw new Error("Force failed")
                 await refresh()
             } catch (e) {
@@ -50,14 +62,15 @@ export function usePlcStatus(pollMs = 1000) {
                 setBusyNodeId(null)
             }
         },
-        [refresh]
+        [getNodeIndex, refresh]
     )
 
     const releaseNode = useCallback(
         async (node: PlcNodeState) => {
             setBusyNodeId(node.id)
             try {
-                const ok = await releaseOutput(node.id)
+                const nodeIndex = getNodeIndex(node.id) // <-- FIX
+                const ok = await releaseOutput(nodeIndex) // <-- FIX
                 if (!ok) throw new Error("Release failed")
                 await refresh()
             } catch (e) {
@@ -66,9 +79,8 @@ export function usePlcStatus(pollMs = 1000) {
                 setBusyNodeId(null)
             }
         },
-        [refresh]
+        [getNodeIndex, refresh]
     )
 
     return { status, receivedAtMs, error, busyNodeId, refresh, toggleDigitalOutNode, releaseNode }
-
 }

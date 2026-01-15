@@ -7,14 +7,15 @@ import {
     type Node,
     type Edge,
     type Connection,
-    type NodeTypes, useReactFlow,
+    type NodeTypes,
+    type NodeProps,
+    useReactFlow,
 } from "@xyflow/react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import type { EditorNodeUi, WireUi } from "./editorTypes"
 import { NODE_SPEC } from "./nodeUiSpec"
 import type { PlcNodeState } from "../plc.types"
-import type {NodeType} from "./nodeCatalog.ts";
-import { ReactFlowProvider } from "@xyflow/react"
+import type {NodeType} from "./nodeCatalog.ts"
 
 /* ================= TYPES ================= */
 
@@ -38,7 +39,6 @@ type Props = {
 
 type PlcNodeData = {
     node: EditorNodeUi
-    selected: boolean
     runtime: PlcNodeState | null
 }
 
@@ -82,12 +82,12 @@ function isDigitalOutNodeType(type: string): boolean {
 
 /* ================= NODE ================= */
 
-function PlcNodeView({ data }: { data: PlcNodeData }) {
-    const { node, selected, runtime } = data
-    const spec = NODE_SPEC[node.type]
-    const ports = spec?.ports ?? {}
-    const hideB = ports.hideB ?? false
+type PlcRfNode = Node<PlcNodeData, "plc">
 
+function PlcNodeView({ data, selected }: NodeProps<PlcRfNode>) {
+    const { node, runtime } = data
+    const spec = NODE_SPEC[node.type]
+    const hideB = spec?.ports?.hideB ?? false
 
     return (
         <div className={`plc-node ${selected ? "plc-node--selected" : ""}`}>
@@ -98,28 +98,9 @@ function PlcNodeView({ data }: { data: PlcNodeData }) {
                 </div>
             </div>
 
-            <Handle
-                className="plc-handle plc-handle--in plc-handle--a"
-                id="A"
-                type="target"
-                position={Position.Left}
-            />
-
-            {!hideB && (
-                <Handle
-                    className="plc-handle plc-handle--in plc-handle--b"
-                    id="B"
-                    type="target"
-                    position={Position.Left}
-                />
-            )}
-
-            <Handle
-                className="plc-handle plc-handle--out"
-                id="OUT"
-                type="source"
-                position={Position.Right}
-            />
+            <Handle className="plc-handle plc-handle--in plc-handle--a" id="A" type="target" position={Position.Left} />
+            {!hideB && <Handle className="plc-handle plc-handle--in plc-handle--b" id="B" type="target" position={Position.Left} />}
+            <Handle className="plc-handle plc-handle--out" id="OUT" type="source" position={Position.Right} />
 
 
             <div className="plc-node__rows">
@@ -158,18 +139,16 @@ export function GraphFlow(props: Props) {
     const [ctxBusy, setCtxBusy] = useState(false)
     const [ctxErr, setCtxErr] = useState<string | null>(null)
 
-    const rfNodes = useMemo<Node<PlcNodeData>[]>(() => {
-        return props.nodes.map((n) => ({
-            id: String(n.localId),
-            type: "plc",
-            position: { x: n.x ?? 0, y: n.y ?? 0 },
-            data: {
-                node: n,
-                selected: props.selectedNodeId === n.localId,
-                runtime: props.nodeStateById?.get(n.localId) ?? null,
-            },
-        }))
-    }, [props.nodes, props.selectedNodeId, props.nodeStateById])
+    const rfNodes = useMemo(() => props.nodes.map((n) => ({
+        id: String(n.localId),
+        type: "plc",
+        position: { x: n.x ?? 0, y: n.y ?? 0 },
+        selected: props.selectedNodeId === n.localId,   // ✅ вот сюда
+        data: {
+            node: n,
+            runtime: props.nodeStateById?.get(n.localId) ?? null,
+        },
+    })),[props.nodes, props.selectedNodeId, props.nodeStateById])
 
     const rfEdges = useMemo<Edge[]>(() => {
         return props.wires.map((w) => ({

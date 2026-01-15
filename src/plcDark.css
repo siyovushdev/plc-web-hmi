@@ -655,3 +655,74 @@ body {
     font-size: 11px !important;
 }
 
+.plc-node--selected{
+    border: 2px solid rgba(47,125,246,.95);
+    box-shadow: 0 0 0 3px rgba(47,125,246,.25), 0 16px 30px rgba(0,0,0,.55);
+}
+
+.plc-node { pointer-events: all; }
+
+.react-flow__node-plc.selected > .plc-node{
+    border: 2px solid rgba(47,125,246,.95) !important;
+    box-shadow: 0 0 0 3px rgba(47,125,246,.25), 0 16px 30px rgba(0,0,0,.55) !important;
+}
+
+/* ===== Node sizing (more compact) ===== */
+.plc-node {
+    width: 180px !important;
+    min-height: 78px !important;
+}
+
+.plc-node__hdr {
+    padding: 6px 8px 5px !important;
+}
+
+.plc-node__name {
+    font-size: 14px !important;
+    font-weight: 900 !important;
+}
+
+.plc-node__badge {
+    font-size: 10px !important;
+    padding: 2px 7px !important;
+}
+
+.plc-node__rows {
+    padding: 0 8px 8px !important;
+    gap: 6px !important;
+}
+
+.plc-row {
+    padding: 5px 7px !important;
+    border-radius: 10px !important;
+}
+
+.plc-row__left,
+.plc-row__val {
+    font-size: 11px !important;
+}
+
+.plc-props__btns .plc-btn {
+    height: 36px;
+    border-radius: 12px;
+    font-weight: 900;
+}
+
+.plc-props-sec__hdr {
+    background: rgba(255,255,255,.03);
+}
+
+.plc-props-sec__body {
+    gap: 12px;
+}
+
+.plc-kv__k {
+    font-size: 12px;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+
+.plc-kv__v {
+    font-weight: 900;
+}
+

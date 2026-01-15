@@ -651,12 +651,17 @@ export function GraphPage() {
                     <div className="plc-panel__body">
 
                         <PropertiesPanel
+                            key={selectedNode?.localId ?? "none"}   // ✅ важно
                             selectedNode={selectedNode}
                             nodeState={selectedNode ? nodeStateById.get(selectedNode.localId) ?? null : null}
                             nodeStateById={nodeStateById}
+                            nodes={nodes}
+                            wires={wires}
                             onApply={(id, patch) => updateNode(id, patch)}
                             onDelete={(id) => removeNode(id)}
                         />
+
+
                     </div>
                 </aside>
             </div>
