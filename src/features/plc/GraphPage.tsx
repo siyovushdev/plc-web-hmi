@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
 import { usePlcStatus } from "./usePlcStatus"
-import { activateGraph, uploadGraph, getActiveGraphMeta, forceOutput, releaseOutput } from "./plc.api"
 import type { EditorNodeUi, ValidationError, WireUi, ProjectUiV2 } from "./graph/editorTypes"
 import { validateGraph } from "./graph/editorValidate"
 import { buildGraph } from "./graph/editorBuild"
@@ -14,6 +13,7 @@ import type { PlcNodeState } from "./plc.types"
 import { BlockLibrary } from "./graph/BlockLibrary"
 import { PropertiesPanel } from "./graph/PropertiesPanel"
 import { ReactFlowProvider } from "@xyflow/react"
+import { activateGraph, uploadGraph, getActiveGraphMeta, forceOutput, releaseOutput, persistSave, persistLoad } from "./plc.api"
 
 function nextLocalId(nodes: EditorNodeUi[]) {
     const maxId = nodes.reduce((m, n) => Math.max(m, n.localId), -1)
@@ -187,7 +187,8 @@ export function GraphPage() {
     ])
     const [wires, setWires] = useState<WireUi[]>([])
 
-    const [busy, setBusy] = useState<null | "upload" | "activate" | "loadActive">(null)
+    const [busy, setBusy] = useState<null | "upload" | "activate" | "loadActive" | "persistSave" | "persistLoad">(null)
+
 
     const [errs, setErrs] = useState<ValidationError[]>([])
     const [lastResp, setLastResp] = useState<unknown>(null)
@@ -394,6 +395,41 @@ export function GraphPage() {
         setWires((prev) => prev.filter((w) => !(w.toNode === toNode && w.toPort === toPort)))
     }
 
+    async function onPersistSave() {
+        setBusy("persistSave")
+        try {
+            const resp = await persistSave()
+            setLastResp(resp)
+            await refreshActiveMeta()
+            refresh()
+        } catch (e) {
+            setLastResp({ ok: false, error: e instanceof Error ? e.message : String(e) })
+        } finally {
+            setBusy(null)
+        }
+    }
+
+    async function onPersistLoad() {
+        setBusy("persistLoad")
+        try {
+            const resp = await persistLoad()
+            setLastResp(resp)
+
+            // после загрузки из persist обычно активный граф меняется
+            await refreshActiveMeta()
+            refresh()
+
+            // если gateway хранит active graphJson и обновляет его при persistLoad — подтянем его в редактор
+            // иначе это просто загрузит то, что gateway считает active (может быть старое) — но кнопка полезна.
+            await onLoadActive()
+        } catch (e) {
+            setLastResp({ ok: false, error: e instanceof Error ? e.message : String(e) })
+        } finally {
+            setBusy(null)
+        }
+    }
+
+
     async function onLoadActive() {
         setErrs([])
         setLastResp(null)
@@ -563,6 +599,15 @@ export function GraphPage() {
                     <button className="plc-btn plc-btn--ghost" onClick={onLoadActive} disabled={busy != null}>
                         {busy === "loadActive" ? "Loading..." : "Load Active"}
                     </button>
+
+                    <button className="plc-btn plc-btn--ghost" onClick={onPersistSave} disabled={busy != null}>
+                        {busy === "persistSave" ? "Saving..." : "Save PLC"}
+                    </button>
+
+                    <button className="plc-btn plc-btn--ghost" onClick={onPersistLoad} disabled={busy != null}>
+                        {busy === "persistLoad" ? "Loading..." : "Load PLC"}
+                    </button>
+
 
                     <button
                         className="plc-btn plc-btn--ghost"

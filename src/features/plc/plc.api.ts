@@ -80,3 +80,12 @@ export async function getActiveGraphMeta(): Promise<ActiveGraphMeta | null> {
     const j = (await r.json()) as { ok: boolean; graphJson: string; sha256: string }
     return { graphJson: j.graphJson, sha256: j.sha256 }
 }
+
+// PLC PERSIST (save/load graph in MCU flash via gateway)
+export async function persistSave(): Promise<unknown> {
+    return fetchJson<unknown>("/api/plc/persist/save", { method: "POST" }, 6000)
+}
+
+export async function persistLoad(): Promise<unknown> {
+    return fetchJson<unknown>("/api/plc/persist/load", { method: "POST" }, 6000)
+}

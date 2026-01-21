@@ -17,7 +17,17 @@ function applyWires(nodes: EditorNodeUi[], wires: WireUi[]): EditorNodeUi[] {
     }))
 }
 
-// детерминированный topo-sort по computed inA/inB
+function toIntSafe(s: string): number {
+    const n = Number(s)
+    return Number.isFinite(n) ? Math.trunc(n) : 0
+}
+
+function toNumSafe(s: string): number {
+    const n = Number(s)
+    return Number.isFinite(n) ? n : 0
+}
+
+// детерминированный topo-sort по computed inA/inB (+ зависимость MUX2 от selector paramInt)
 function topoSortLocalIds(nodes: EditorNodeUi[]): number[] {
     const ids = nodes.map((n) => n.localId)
     const idSet = new Set(ids)
@@ -25,8 +35,16 @@ function topoSortLocalIds(nodes: EditorNodeUi[]): number[] {
     const deps = new Map<number, number[]>()
     for (const n of nodes) {
         const d: number[] = []
+
         if (n.inA !== -1 && idSet.has(n.inA)) d.push(n.inA)
         if (n.inB !== -1 && idSet.has(n.inB)) d.push(n.inB)
+
+        // MUX2: paramInt = localId селектора (BOOL)
+        if (n.type === "MUX2") {
+            const selLocalId = toIntSafe(n.paramInt)
+            if (selLocalId !== -1 && idSet.has(selLocalId)) d.push(selLocalId)
+        }
+
         deps.set(n.localId, d)
     }
 
@@ -61,39 +79,25 @@ function topoSortLocalIds(nodes: EditorNodeUi[]): number[] {
     return out
 }
 
-function toIntSafe(s: string): number {
-    const n = Number(s)
-    return Number.isFinite(n) ? Math.trunc(n) : 0
-}
-
-function toNumSafe(s: string): number {
-    const n = Number(s)
-    return Number.isFinite(n) ? n : 0
-}
-
 export function buildGraph(cycleMsStr: string, nodes: EditorNodeUi[], wires: WireUi[]) {
     const cycleMs = toIntSafe(cycleMsStr)
-    const compiledNodes = applyWires(nodes, wires)
+    const wiredNodes = applyWires(nodes, wires)
 
-    const order = topoSortLocalIds(compiledNodes)
+    // Можно оставить порядок topo для “красивого” сохранения,
+    // НО ссылки inA/inB НЕ трогаем — они должны остаться localId.
+    const order = topoSortLocalIds(wiredNodes)
     const byId = new Map<number, EditorNodeUi>()
-    for (const n of compiledNodes) byId.set(n.localId, n)
-
-    // localId -> index (runtime index)
-    const localIdToIndex = new Map<number, number>()
-    order.forEach((localId, idx) => localIdToIndex.set(localId, idx))
+    for (const n of wiredNodes) byId.set(n.localId, n)
 
     const outNodes = order.map((localId) => {
         const n = byId.get(localId)!
-        const inA = n.inA === -1 ? -1 : (localIdToIndex.get(n.inA) ?? -1)
-        const inB = n.inB === -1 ? -1 : (localIdToIndex.get(n.inB) ?? -1)
 
         return {
-            id: localId, // stable id = localId
+            id: localId, // стабильный id = localId (ссылки тоже по localId)
             type: n.type,
             valueType: n.valueType,
-            inA,
-            inB,
+            inA: n.inA, // <-- ВАЖНО: localId источника
+            inB: n.inB, // <-- ВАЖНО: localId источника
             paramInt: toIntSafe(n.paramInt),
             paramFloat: toNumSafe(n.paramFloat),
             paramMs: toIntSafe(n.paramMs),

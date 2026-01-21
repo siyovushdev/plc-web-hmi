@@ -8,15 +8,32 @@ export type PlcStatus = {
         linkStatus: string
     }
     performance: {
+        // scan (только plc_tick / scan графа)
         scanAvgMs: number
         scanMaxMs: number
+        scanAvgUs: number
+        scanMaxUs: number
+
+        // full cycle work (всё внутри TaskPlcScan без сна osDelayUntil)
+        workAvgMs: number
+        workMaxMs: number
+        workAvgUs: number
+        workMaxUs: number
+
+        // real period between cycle starts (факт, с учетом планировщика)
+        cycleRealAvgMs: number
+        cycleRealMaxMs: number
+
+        // configured target cycle
         scanLimitMs: number
+
         cpuLoadPercent: number
         memoryUsagePercent: number
         crcErrors: number
         timeouts: number
         scanLongSteps: number
     }
+
     ioSummary: {
         diUsed: number
         diTotal: number

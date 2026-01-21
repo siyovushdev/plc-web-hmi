@@ -9,25 +9,20 @@ function Nav() {
         padding: "8px 12px",
         borderRadius: 10,
         textDecoration: "none",
-        color: "#111827",
-        background: isActive ? "#e5e7eb" : "transparent",
-        border: "1px solid #e5e7eb",
+        border: "1px solid",
+        // важно: чтобы неактивные были видны на тёмном фоне
+        color: isActive ? "#0b1220" : "#e5e7eb",
+        background: isActive ? "#f8fafc" : "rgba(255,255,255,0.08)",
+        borderColor: isActive ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.18)",
+        boxShadow: isActive ? "0 6px 18px rgba(0,0,0,0.25)" : "none",
     })
 
     return (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <NavLink to="/status" style={linkStyle}>
-                Status
-            </NavLink>
-            <NavLink to="/io" style={linkStyle}>
-                IO
-            </NavLink>
-            <NavLink to="/memory" style={linkStyle}>
-                Memory
-            </NavLink>
-            <NavLink to="/graph" style={linkStyle}>
-                Graph
-            </NavLink>
+            <NavLink to="/status" style={linkStyle}>Status</NavLink>
+            <NavLink to="/io" style={linkStyle}>IO</NavLink>
+            <NavLink to="/memory" style={linkStyle}>Memory</NavLink>
+            <NavLink to="/graph" style={linkStyle}>Graph</NavLink>
         </div>
     )
 }
