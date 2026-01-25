@@ -3,6 +3,8 @@ import { IoPage } from "./features/plc/IoPage.tsx"
 import {StatusPage} from "./features/plc/StatusPage.tsx";
 import { GraphPage } from "./features/plc/GraphPage"
 import "@xyflow/react/dist/style.css"
+import { LogPage } from "./features/plc/LogPage.tsx"
+import { MemoryPage } from "./features/plc/MemoryPage.tsx"
 
 function Nav() {
     const linkStyle = ({ isActive }: { isActive: boolean }) => ({
@@ -23,6 +25,7 @@ function Nav() {
             <NavLink to="/io" style={linkStyle}>IO</NavLink>
             <NavLink to="/memory" style={linkStyle}>Memory</NavLink>
             <NavLink to="/graph" style={linkStyle}>Graph</NavLink>
+            <NavLink to="/log" style={linkStyle}>Log</NavLink>
         </div>
     )
 }
@@ -48,8 +51,9 @@ export default function App() {
 
                     <Route path="/status" element={<StatusPage />} />
                     <Route path="/io" element={<IoPage />} />
-                    <Route path="/memory" element={<Placeholder title="Memory" />} />
+                    <Route path="/memory" element={<MemoryPage />} />
                     <Route path="/graph" element={<GraphPage />} />
+                    <Route path="/log" element={<LogPage />} />
 
                     <Route path="*" element={<Navigate to="/status" replace />} />
                 </Routes>

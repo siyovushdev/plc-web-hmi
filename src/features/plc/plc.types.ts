@@ -86,3 +86,18 @@ export function isApiFail(x: unknown): x is ApiFail {
 
 export type ForceReq = { nodeIndex: number; valueInt: number; holdMs?: number }
 export type ReleaseReq = { nodeIndex: number }
+
+export type PlcLogItem = {
+    tsMs: number
+    code: number
+    a: number
+    b: number
+}
+
+export type PlcLogDump = {
+    total: number
+    from: number
+    count: number
+    items: PlcLogItem[]
+}
+

@@ -1,5 +1,5 @@
-import type { PlcStatus, ForceReq, ReleaseReq } from "./plc.types"
 import { isApiFail } from "./plc.types"
+import type { PlcStatus, ForceReq, ReleaseReq, PlcLogDump } from "./plc.types"
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? ""
 
@@ -89,3 +89,19 @@ export async function persistSave(): Promise<unknown> {
 export async function persistLoad(): Promise<unknown> {
     return fetchJson<unknown>("/api/plc/persist/load", { method: "POST" }, 6000)
 }
+
+export async function getPlcLogDump(from = 0, count = 64): Promise<PlcLogDump> {
+    return fetchJson<PlcLogDump>(`/api/plc/log/dump?from=${from}&count=${count}`, { method: "GET" })
+}
+
+// Удобно для UI: получить последние N записей (tail), а не "с начала"
+export async function getPlcLogTail(count = 64): Promise<PlcLogDump> {
+    // 1) спросим total
+    const head = await getPlcLogDump(0, 1)
+    const total = head.total ?? 0
+    const from = Math.max(0, total - count)
+
+    // 2) теперь tail
+    return getPlcLogDump(from, count)
+}
+
