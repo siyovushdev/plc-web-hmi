@@ -130,17 +130,101 @@ export function validateGraph(cycleMsStr: string, nodes: EditorNodeUi[], wires: 
         }
     }
 
-    // type-aware wires: from.valueType must match to.valueType (упрощённая, но строгая модель)
+    function typeName(v: number): string {
+        return v === 0 ? "BOOL" : v === 1 ? "INT" : "REAL"
+    }
+
+    function isNumeric(v: number): boolean {
+        return v === 1 || v === 2
+    }
+
+    function isWireTypeCompatible(from: EditorNodeUi, to: EditorNodeUi, toPort: "A" | "B"): boolean {
+        const fromType = from.valueType
+        const toType = to.valueType
+        const t = to.type.toUpperCase()
+
+        switch (t) {
+            case "HYST":
+                return toPort === "A" && fromType === 2
+
+            case "COMPARE_GT":
+            case "COMPARE_LT":
+            case "COMPARE_GE":
+                return isNumeric(fromType)
+
+            case "SCALE":
+            case "LIMIT":
+            case "ADD":
+            case "PID":
+            case "ANALOG_AVG":
+            case "RAMP":
+            case "FILTER_AVG":
+            case "AO":
+                return toPort === "A" && isNumeric(fromType) || (t === "ADD" && isNumeric(fromType))
+
+            case "MATH_OP":
+                return isNumeric(fromType)
+
+            case "PWM_OUT":
+                return toPort === "A" && isNumeric(fromType)
+
+            case "TON":
+            case "TOFF":
+            case "TP":
+            case "R_TRIG":
+            case "F_TRIG":
+            case "NOT":
+            case "DIGITAL_OUT":
+            case "AND2":
+            case "OR2":
+            case "SR":
+            case "ALARM_GEN":
+            case "ALARM_LATCH":
+                return fromType === 0
+
+            case "MUX2":
+                // оба входа должны соответствовать типу выхода самого MUX2
+                return fromType === toType
+
+            case "SAFE_OUTPUT":
+                // вход A — того же типа, что и выход узла
+                // вход B — обычно BOOL allow
+                if (toPort === "A") return fromType === toType
+                if (toPort === "B") return fromType === 0
+                return false
+
+            case "MEM_BOOL":
+                if (toPort === "A") return fromType === 0
+                if (toPort === "B") return fromType === 0
+                return true
+
+            case "MEM_INT":
+                if (toPort === "A") return fromType === 1
+                if (toPort === "B") return fromType === 0
+                return true
+
+            case "MEM_REAL":
+                if (toPort === "A") return fromType === 2
+                if (toPort === "B") return fromType === 0
+                return true
+
+            default:
+                // fallback: старое поведение
+                return fromType === toType
+        }
+    }
+
+// type-aware wires
     for (const w of wires) {
         const from = nodes.find((n) => n.localId === w.fromNode)
         const to = nodes.find((n) => n.localId === w.toNode)
         if (!from || !to) continue
 
-        if (from.valueType !== to.valueType) {
+        if (!isWireTypeCompatible(from, to, w.toPort)) {
             errs.push({
                 nodeLocalId: w.toNode,
                 field: w.toPort === "A" ? "inA" : "inB",
-                message: `Несовместимые типы: ${from.valueType === 0 ? "BOOL" : from.valueType === 1 ? "INT" : "REAL"} -> ${to.valueType === 0 ? "BOOL" : to.valueType === 1 ? "INT" : "REAL"}`,
+                message: `Несовместимые типы: ${typeName(from.valueType)} -> ${to.type}.${w.toPort}`,
             })
         }
     }
@@ -184,3 +268,6 @@ export function validateGraph(cycleMsStr: string, nodes: EditorNodeUi[], wires: 
 
     return errs
 }
+
+
+

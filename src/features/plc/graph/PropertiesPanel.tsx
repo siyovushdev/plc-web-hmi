@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import type { EditorNodeUi, WireUi } from "./editorTypes"
 import type { PlcNodeState } from "../plc.types"
 import { NODE_SPEC } from "./nodeUiSpec"
@@ -147,7 +147,7 @@ export function PropertiesPanel(props: Props) {
     const showRuntimePID = n.type === "PID"
 
     const showAnyRuntime = showRuntimeTON || showRuntimeTOFF || showRuntimeTP || showRuntimePID
-    const showAnyParams = !!(spec?.showInt || spec?.showFloat || spec?.showMs || spec?.showFlags)
+
 
     return (
         <div className="plc-props">

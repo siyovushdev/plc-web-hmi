@@ -4,7 +4,7 @@ import type { EditorNodeUi, ValidationError, WireUi, ProjectUiV2 } from "./graph
 import { validateGraph } from "./graph/editorValidate"
 import { buildGraph } from "./graph/editorBuild"
 import { NODE_TYPES, type NodeType } from "./graph/nodeCatalog"
-import { loadProject, saveProject, exportProjectFile, importProjectFile } from "./graph/projectStore"
+import { loadProject, saveProject} from "./graph/projectStore"
 import { NODE_SPEC } from "./graph/nodeUiSpec"
 import type { ParamSpec } from "./graph/nodeUiSpec"
 import { autoLayout } from "./graph/autoLayout"
@@ -42,40 +42,6 @@ function errToText(e: ValidationError) {
     return `${who}${fld}: ${e.message}`
 }
 
-type TemplateId = "DI_TON_DO" | "DI_DO" | "BLINK"
-
-function makeTemplate(t: TemplateId, startId: number) {
-    // все шаблоны делаем BOOL для простоты (как обычно в PLC)
-    if (t === "DI_TON_DO") {
-        const n0: EditorNodeUi = { localId: startId + 0, type: "DIGITAL_IN", valueType: 0, inA: -1, inB: -1, paramInt: "0", paramFloat: "0", paramMs: "0", flags: "0" }
-        const n1: EditorNodeUi = { localId: startId + 1, type: "TON", valueType: 0, inA: -1, inB: -1, paramInt: "0", paramFloat: "0", paramMs: "1000", flags: "0" }
-        const n2: EditorNodeUi = { localId: startId + 2, type: "DIGITAL_OUT", valueType: 0, inA: -1, inB: -1, paramInt: "0", paramFloat: "0", paramMs: "0", flags: "0" }
-
-        const wires: WireUi[] = [
-            { fromNode: n0.localId, toNode: n1.localId, toPort: "A" },
-            { fromNode: n1.localId, toNode: n2.localId, toPort: "A" },
-        ]
-        return { nodes: [n0, n1, n2], wires }
-    }
-
-    if (t === "DI_DO") {
-        const n0: EditorNodeUi = { localId: startId + 0, type: "DIGITAL_IN", valueType: 0, inA: -1, inB: -1, paramInt: "0", paramFloat: "0", paramMs: "0", flags: "0" }
-        const n1: EditorNodeUi = { localId: startId + 1, type: "DIGITAL_OUT", valueType: 0, inA: -1, inB: -1, paramInt: "0", paramFloat: "0", paramMs: "0", flags: "0" }
-        const wires: WireUi[] = [{ fromNode: n0.localId, toNode: n1.localId, toPort: "A" }]
-        return { nodes: [n0, n1], wires }
-    }
-
-    // BLINK: TP (pulse) от HEARTBEAT или CONST_BOOL? В простом виде: HEARTBEAT -> TP -> DIGITAL_OUT
-    // Если HEARTBEAT у тебя реально работает как генератор, это будет “мигалка”.
-    const n0: EditorNodeUi = { localId: startId + 0, type: "HEARTBEAT" as NodeType, valueType: 0, inA: -1, inB: -1, paramInt: "0", paramFloat: "0", paramMs: "500", flags: "0" }
-    const n1: EditorNodeUi = { localId: startId + 1, type: "TP", valueType: 0, inA: -1, inB: -1, paramInt: "0", paramFloat: "0", paramMs: "200", flags: "0" }
-    const n2: EditorNodeUi = { localId: startId + 2, type: "DIGITAL_OUT", valueType: 0, inA: -1, inB: -1, paramInt: "0", paramFloat: "0", paramMs: "0", flags: "0" }
-    const wires: WireUi[] = [
-        { fromNode: n0.localId, toNode: n1.localId, toPort: "A" },
-        { fromNode: n1.localId, toNode: n2.localId, toPort: "A" },
-    ]
-    return { nodes: [n0, n1, n2], wires }
-}
 
 const DEFAULT_SPEC: ParamSpec = { showInt: true, showFloat: true, showMs: true, showFlags: true }
 
@@ -176,7 +142,7 @@ async function sha256Hex(text: string): Promise<string> {
 export function GraphPage() {
     const [activeSha, setActiveSha] = useState<string | null>(null)
     const [editorSha, setEditorSha] = useState<string | null>(null)
-    const [shaErr, setShaErr] = useState<string | null>(null)
+    const [, setShaErr] = useState<string | null>(null)
     const { status, error: statusErr, refresh } = usePlcStatus(1000)
     const [hydrated, setHydrated] = useState(false)
     const [cycleMs, setCycleMs] = useState("10")
@@ -194,7 +160,6 @@ export function GraphPage() {
     const [lastResp, setLastResp] = useState<unknown>(null)
     const [showBuiltJson, setShowBuiltJson] = useState(false)
 
-    const [showCanvas, setShowCanvas] = useState(true)
     const [showWires, setShowWires] = useState(false)
 
     const [selectedNodeId, setSelectedNodeId] = useState<number | null>(null)
@@ -347,7 +312,7 @@ export function GraphPage() {
                 const json = canonicalBuilt(built)
                 const sha = await sha256Hex(json)
                 if (!cancelled) setEditorSha(sha)
-            } catch (e) {
+            } catch  {
                 if (!cancelled) setEditorSha(null)
             }
         }
@@ -499,40 +464,6 @@ export function GraphPage() {
     }
 
     // templates
-    const [tpl, setTpl] = useState<TemplateId>("DI_TON_DO")
-    function insertTemplate() {
-        const startId = nextLocalId(nodes)
-        const t = makeTemplate(tpl, startId)
-
-        const mergedNodes = [...nodes, ...t.nodes]
-        const mergedWires = mergeWiresUnique(wires, t.wires)
-
-        let laidOut = mergedNodes
-        try {
-            laidOut = autoLayout(mergedNodes, mergedWires)
-        } catch {
-            // если авто-раскладка упала — оставляем как есть
-        }
-
-        setNodes(laidOut)
-        setWires(mergedWires)
-        setSelectedNodeId(null)
-    }
-
-
-    function mergeWiresUnique(base: WireUi[], add: WireUi[]): WireUi[] {
-        // ключ = входной порт (toNode + toPort). В один вход — только один провод.
-        const m = new Map<string, WireUi>()
-        for (const w of base) m.set(`${w.toNode}:${w.toPort}`, w)
-        for (const w of add) m.set(`${w.toNode}:${w.toPort}`, w)
-        return Array.from(m.values())
-    }
-
-    // property panel helpers
-    function applyPresetMs(ms: number) {
-        if (!selectedNode) return
-        updateNode(selectedNode.localId, { paramMs: String(ms) })
-    }
 
     const forceDo = async (nodeId: number, desired: boolean, holdMs: number) => {
         const ok = await forceOutput(nodeId, desired, holdMs)

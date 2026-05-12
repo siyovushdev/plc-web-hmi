@@ -60,7 +60,7 @@ export function autoLayout(nodes: EditorNodeUi[], wires: WireUi[]): EditorNodeUi
         groups.set(c, arr)
     }
 
-    for (const [c, arr] of groups) {
+    for (const [, arr] of groups) {
         arr.sort((a, b) => a.localId - b.localId)
         arr.forEach((n, idx) => (n.row = idx))
     }

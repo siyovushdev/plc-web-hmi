@@ -5,6 +5,10 @@ const API_TARGET = process.env.VITE_API_PROXY_TARGET || "http://localhost:8082"
 
 export default defineConfig({
   plugins: [react()],
+
+  // КРИТИЧНО для ESP32
+  base: "./",
+
   server: {
     proxy: {
       "/api": {
