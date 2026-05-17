@@ -3,26 +3,22 @@ import type { PlcLogDump, PlcLogItem } from "./plc.types"
 import { getPlcLogDump, getPlcLogTail } from "./plc.api"
 
 const CODE_NAME: Record<number, string> = {
-    1: "BOOT",
+    0: "NONE",
+
+    1: "VALIDATE_ERROR",
+
     2: "UPLOAD_OK",
     3: "UPLOAD_FAIL",
+
     4: "ACTIVATE_OK",
     5: "ACTIVATE_FAIL",
-    6: "PERSIST_SAVE_OK",
-    7: "PERSIST_SAVE_FAIL",
-    8: "PERSIST_LOAD_OK",
-    9: "PERSIST_LOAD_FAIL",
-    10: "CRC_ERR",
-    11: "CBOR_DECODE_ERR",
-    12: "VALIDATE_ERR",
-    13: "FORCE",
-    14: "RELEASE",
-    15: "SCAN_OVERRUN",
-    16: "SCAN_LONG",
-    17: "WATCHDOG",
-    18: "ASSERT",
-    19: "PERSIST_LOAD_REQ", // если добавлял
-    20: "LOG_VALUE",
+
+    6: "FORCE_ON",
+    7: "FORCE_OFF",
+
+    8: "LOG_VALUE",
+
+    9: "RUNTIME_ERROR",
 }
 
 
