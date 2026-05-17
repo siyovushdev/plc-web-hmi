@@ -80,12 +80,15 @@ export async function activateGraph(): Promise<unknown> {
 }
 
 export async function getActiveGraphJson(): Promise<string> {
-    const resp = await fetchJson<{ ok: boolean; graphJson: string }>(
+    const resp = await fetchJson<{ ok: boolean; graphJson: unknown }>(
         "/api/plc/graph/active",
         { method: "GET" },
         TIMEOUT_GRAPH_READ
     )
-    return resp.graphJson
+
+    return typeof resp.graphJson === "string"
+        ? resp.graphJson
+        : JSON.stringify(resp.graphJson)
 }
 
 export async function getActiveGraphMeta(): Promise<ActiveGraphMeta | null> {
@@ -101,8 +104,14 @@ export async function getActiveGraphMeta(): Promise<ActiveGraphMeta | null> {
         if (r.status === 404) return null
         if (!r.ok) throw new Error(`HTTP ${r.status}`)
 
-        const j = (await r.json()) as { ok: boolean; graphJson: string; sha256: string }
-        return { graphJson: j.graphJson, sha256: j.sha256 }
+        const j = (await r.json()) as { ok: boolean; graphJson: unknown; sha256: string }
+
+        return {
+            graphJson: typeof j.graphJson === "string"
+                ? j.graphJson
+                : JSON.stringify(j.graphJson),
+            sha256: j.sha256,
+        }
     } finally {
         clearTimeout(t)
     }

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import type { PlcNodeState, PlcStatus } from "./plc.types"
 import { forceOutput, getPlcStatus, releaseOutput } from "./plc.api"
 
-export function usePlcStatus(pollMs = 1000) {
+export function usePlcStatus(pollMs = 250) {
     const [status, setStatus] = useState<PlcStatus | null>(null)
     const [receivedAtMs, setReceivedAtMs] = useState<number>(0)
     const [error, setError] = useState<string | null>(null)
