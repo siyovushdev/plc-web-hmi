@@ -1,3 +1,10 @@
+export type PlcConnection = {
+    fromNode: number
+    fromPort: string
+    toNode: number
+    toPort: string
+}
+
 export type PlcStatus = {
     connection: {
         ip: string
@@ -6,6 +13,9 @@ export type PlcStatus = {
         uptime: string
         lastExchangeAgo: string
         linkStatus: string
+        running?: boolean
+        activeGraphValid?: boolean
+        safeOrFault?: boolean
     }
     performance: {
         // scan (только plc_tick / scan графа)
@@ -47,6 +57,8 @@ export type PlcStatus = {
     activeGraph: {
         name: string
         version: string
+        size?: number
+        crc32?: string
         nodes: number
         connections: number
         inputs: number
@@ -54,17 +66,26 @@ export type PlcStatus = {
         compileErrors: number
         activatedAt: string
         runState: string
+        runtimeFault?: number
+        runtimeFaultCounter?: number
     }
     alarms: unknown[]
     nodes: PlcNodeState[]
+    connections?: PlcConnection[]
     isLoading: boolean
     errorMessage: string | null
 }
 
+export type PlcNodeInputs = Record<string, boolean | number | null>
+
 export type PlcNodeState = {
+    index?: number
     id: number
     type: string
     valueType: number
+    inA?: number
+    inB?: number
+    inputs?: PlcNodeInputs
     outBool: boolean
     outInt: number | null
     outFloat: number | null
@@ -78,6 +99,59 @@ export type PlcNodeState = {
     forceValue: boolean | null
     forceLeftMs: number | null
 }
+
+export type PlcRuntimeStreamState = "disabled" | "connecting" | "online" | "fallback" | "error"
+
+export type PlcRuntimeHelloMessage = {
+    type: "hello"
+    proto?: number
+    device?: string
+    mode?: string
+    connected?: boolean
+}
+
+export type PlcRuntimeTopologyMessage = {
+    type: "topology"
+    graph?: Partial<PlcStatus["activeGraph"]>
+    nodes?: Array<Partial<PlcNodeState> & { index: number; id?: number; type?: string }>
+    connections?: PlcConnection[]
+}
+
+export type PlcRuntimeMessage = {
+    type: "runtime"
+    cycleCounter?: number
+    scanAvgUs?: number
+    scanMaxUs?: number
+    cpuLoadPercent?: number
+    nodes?: Array<Partial<PlcNodeState> & { index: number }>
+}
+
+export type PlcRuntimeIoMessage = {
+    type: "io"
+    diUsed?: number
+    diTotal?: number
+    doUsed?: number
+    doTotal?: number
+    aiUsed?: number
+    aiTotal?: number
+    pwmUsed?: number
+    pwmTotal?: number
+}
+
+export type PlcRuntimeAlarmMessage = {
+    type: "alarm"
+    safeOrFault?: boolean
+    runtimeFault?: number
+    runtimeFaultCounter?: number
+    items?: unknown[]
+}
+
+export type PlcRuntimeWsMessage =
+    | PlcRuntimeHelloMessage
+    | PlcRuntimeTopologyMessage
+    | PlcRuntimeMessage
+    | PlcRuntimeIoMessage
+    | PlcRuntimeAlarmMessage
 
 export type ApiFail = { ok: false; error?: string }
 export function isApiFail(x: unknown): x is ApiFail {
@@ -100,4 +174,3 @@ export type PlcLogDump = {
     count: number
     items: PlcLogItem[]
 }
-
