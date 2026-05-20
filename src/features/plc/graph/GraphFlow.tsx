@@ -15,9 +15,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import type { EditorNodeUi, WireUi } from "./editorTypes"
 import { NODE_SPEC } from "./nodeUiSpec"
 import type { PlcNodeState } from "../plc.types"
-import type {NodeType} from "./nodeCatalog.ts"
-
-/* ================= TYPES ================= */
+import type { NodeType } from "./nodeCatalog.ts"
 
 type Props = {
     nodes: EditorNodeUi[]
@@ -28,13 +26,9 @@ type Props = {
     upsertWire: (fromNode: number, toNode: number, toPort: "A" | "B") => void
     deleteWire: (fromNode: number, toNode: number, toPort: "A" | "B") => void
     nodeStateById?: Map<number, PlcNodeState>
-
-    // ПКМ меню
     onForceDo: (nodeId: number, desired: boolean, holdMs: number) => Promise<void>
     onReleaseDo: (nodeId: number) => Promise<void>
-
     onCreateNode?: (type: NodeType, pos: { x: number; y: number }) => void
-
 }
 
 type PlcNodeData = {
@@ -50,8 +44,6 @@ type CtxMenuState = {
     y: number
     nodeId: number
 } | null
-
-/* ================= HELPERS ================= */
 
 function classify(type: string): Kind {
     const t = type.toUpperCase()
@@ -76,11 +68,16 @@ function formatRuntime(vt: number, r: PlcNodeState | null): string {
     return Number(r.outFloat).toFixed(3)
 }
 
+function isRuntimeTrue(r: PlcNodeState | null): boolean {
+    if (!r) return false
+    if (r.valueType === 0) return r.outBool === true
+    if (r.valueType === 1) return (r.outInt ?? 0) !== 0
+    return Math.abs(r.outFloat ?? 0) > 0.000001
+}
+
 function isDigitalOutNodeType(type: string): boolean {
     return type === "DIGITAL_OUT"
 }
-
-/* ================= NODE ================= */
 
 type PlcRfNode = Node<PlcNodeData, "plc">
 
@@ -88,12 +85,22 @@ function PlcNodeView({ data, selected }: NodeProps<PlcRfNode>) {
     const { node, runtime } = data
     const spec = NODE_SPEC[node.type]
     const hideB = spec?.ports?.hideB ?? false
+    const runtimeOn = isRuntimeTrue(runtime)
+    const forced = runtime?.forceActive === true
+
+    const className = [
+        "plc-node",
+        selected ? "plc-node--selected" : "",
+        runtimeOn ? "plc-node--runtime-true" : "",
+        forced ? "plc-node--force" : "",
+    ].filter(Boolean).join(" ")
 
     return (
-        <div className={`plc-node ${selected ? "plc-node--selected" : ""}`}>
+        <div className={className}>
             <div className="plc-node__hdr">
                 <div className="plc-node__name">{node.type}</div>
                 <div className="plc-node__sub">
+                    <span className={`plc-runtime-dot ${runtimeOn ? "plc-runtime-dot--on" : ""}`} />
                     <span className="plc-node__badge">{vtLabel(node.valueType)}</span>
                 </div>
             </div>
@@ -102,14 +109,13 @@ function PlcNodeView({ data, selected }: NodeProps<PlcRfNode>) {
             {!hideB && <Handle className="plc-handle plc-handle--in plc-handle--b" id="B" type="target" position={Position.Left} />}
             <Handle className="plc-handle plc-handle--out" id="OUT" type="source" position={Position.Right} />
 
-
             <div className="plc-node__rows">
                 <div className="plc-row">
                     <div className="plc-row__left">
-                        <span className="plc-row__tag">IN</span>
-                        <span>{formatRuntime(node.valueType, runtime) === "TRUE" ? "TRUE" : "FALSE"}</span>
+                        <span className="plc-row__tag">OUT</span>
+                        <span>{formatRuntime(node.valueType, runtime)}</span>
                     </div>
-                    <div className="plc-row__val">{vtLabel(node.valueType)}</div>
+                    <div className="plc-row__val">{forced ? "FORCE" : vtLabel(node.valueType)}</div>
                 </div>
 
                 {classify(node.type) === "TIMER" && (
@@ -127,10 +133,7 @@ function PlcNodeView({ data, selected }: NodeProps<PlcRfNode>) {
             </div>
         </div>
     )
-
 }
-
-/* ================= FLOW ================= */
 
 const nodeTypes: NodeTypes = { plc: PlcNodeView }
 
@@ -139,27 +142,38 @@ export function GraphFlow(props: Props) {
     const [ctxBusy, setCtxBusy] = useState(false)
     const [ctxErr, setCtxErr] = useState<string | null>(null)
 
+    const getRuntime = useCallback(
+        (localId: number) => props.nodeStateById?.get(localId) ?? null,
+        [props.nodeStateById]
+    )
+
     const rfNodes = useMemo(() => props.nodes.map((n) => ({
         id: String(n.localId),
         type: "plc",
         position: { x: n.x ?? 0, y: n.y ?? 0 },
-        selected: props.selectedNodeId === n.localId,   // ✅ вот сюда
+        selected: props.selectedNodeId === n.localId,
         data: {
             node: n,
-            runtime: props.nodeStateById?.get(n.localId) ?? null,
+            runtime: getRuntime(n.localId),
         },
-    })),[props.nodes, props.selectedNodeId, props.nodeStateById])
+    })), [props.nodes, props.selectedNodeId, getRuntime])
 
     const rfEdges = useMemo<Edge[]>(() => {
-        return props.wires.map((w) => ({
-            id: `${w.fromNode}->${w.toNode}.${w.toPort}`,
-            source: String(w.fromNode),
-            sourceHandle: "OUT",
-            target: String(w.toNode),
-            targetHandle: w.toPort,
-            style: { stroke: "rgba(47,125,246,.95)" },
-        }))
-    }, [props.wires])
+        return props.wires.map((w) => {
+            const sourceRuntime = getRuntime(w.fromNode)
+            const active = isRuntimeTrue(sourceRuntime)
+            return {
+                id: `${w.fromNode}->${w.toNode}.${w.toPort}`,
+                source: String(w.fromNode),
+                sourceHandle: "OUT",
+                target: String(w.toNode),
+                targetHandle: w.toPort,
+                className: active ? "plc-edge--active" : "plc-edge--inactive",
+                animated: active,
+                style: { stroke: active ? "#22c55e" : "rgba(47,125,246,.55)", strokeWidth: active ? 3 : 2 },
+            }
+        })
+    }, [props.wires, getRuntime])
 
     const byId = useMemo(() => {
         const m = new Map<number, EditorNodeUi>()
@@ -181,74 +195,57 @@ export function GraphFlow(props: Props) {
         return () => window.removeEventListener("keydown", onKey)
     }, [closeCtx])
 
-    const onConnect = useCallback(
-        (c: Connection) => {
-            if (!c.source || !c.target) return
-            if (c.sourceHandle !== "OUT") return
-            if (c.targetHandle !== "A" && c.targetHandle !== "B") return
+    const onConnect = useCallback((c: Connection) => {
+        if (!c.source || !c.target) return
+        if (c.sourceHandle !== "OUT") return
+        if (c.targetHandle !== "A" && c.targetHandle !== "B") return
 
-            const from = Number(c.source)
-            const to = Number(c.target)
-            if (from === to) return
+        const from = Number(c.source)
+        const to = Number(c.target)
+        if (from === to) return
 
-            const fromN = byId.get(from)
-            const toN = byId.get(to)
-            if (!fromN || !toN) return
+        const fromN = byId.get(from)
+        const toN = byId.get(to)
+        if (!fromN || !toN) return
 
-            const hideB = NODE_SPEC[toN.type]?.ports?.hideB ?? false
-            if (c.targetHandle === "B" && hideB) return
+        const hideB = NODE_SPEC[toN.type]?.ports?.hideB ?? false
+        if (c.targetHandle === "B" && hideB) return
+        if (fromN.valueType !== toN.valueType) return
 
-            if (fromN.valueType !== toN.valueType) return
+        props.upsertWire(from, to, c.targetHandle)
+    }, [props, byId])
 
-            props.upsertWire(from, to, c.targetHandle)
-        },
-        [props, byId]
-    )
+    const onNodeDragStop = useCallback((_: unknown, node: { id: string; position: { x: number; y: number } }) => {
+        const id = Number(node.id)
+        if (!Number.isFinite(id)) return
+        props.onNodesChange((prev) => prev.map((n) => (n.localId === id ? { ...n, x: node.position.x, y: node.position.y } : n)))
+    }, [props])
 
-    const onNodeDragStop = useCallback(
-        (_: unknown, node: { id: string; position: { x: number; y: number } }) => {
-            const id = Number(node.id)
-            if (!Number.isFinite(id)) return
-            props.onNodesChange((prev) => prev.map((n) => (n.localId === id ? { ...n, x: node.position.x, y: node.position.y } : n)))
-        },
-        [props]
-    )
-
-    const onNodeClick = useCallback(
-        (_: unknown, node: { id: string }) => {
-            const id = Number(node.id)
-            if (Number.isFinite(id)) props.onSelectNode(id)
-        },
-        [props]
-    )
+    const onNodeClick = useCallback((_: unknown, node: { id: string }) => {
+        const id = Number(node.id)
+        if (Number.isFinite(id)) props.onSelectNode(id)
+    }, [props])
 
     const onPaneClick = useCallback(() => {
         closeCtx()
         props.onSelectNode(null)
     }, [props, closeCtx])
 
-    const onEdgeDoubleClick = useCallback(
-        (_: unknown, edge: Edge) => {
-            const m = edge.id.match(/^(\d+)->(\d+)\.(A|B)$/)
-            if (!m) return
-            props.deleteWire(Number(m[1]), Number(m[2]), m[3] as "A" | "B")
-        },
-        [props]
-    )
+    const onEdgeDoubleClick = useCallback((_: unknown, edge: Edge) => {
+        const m = edge.id.match(/^(\d+)->(\d+)\.(A|B)$/)
+        if (!m) return
+        props.deleteWire(Number(m[1]), Number(m[2]), m[3] as "A" | "B")
+    }, [props])
 
-    // ПКМ по ноде
-    const onNodeContextMenu = useCallback(
-        (e: React.MouseEvent, node: { id: string }) => {
-            e.preventDefault()
-            e.stopPropagation()
-            const id = Number(node.id)
-            if (!Number.isFinite(id)) return
-            props.onSelectNode(id)
-            setCtx({ open: true, x: e.clientX, y: e.clientY, nodeId: id })
-            setCtxErr(null)
-        },
-        [props]
-    )
+    const onNodeContextMenu = useCallback((e: React.MouseEvent, node: { id: string }) => {
+        e.preventDefault()
+        e.stopPropagation()
+        const id = Number(node.id)
+        if (!Number.isFinite(id)) return
+        props.onSelectNode(id)
+        setCtx({ open: true, x: e.clientX, y: e.clientY, nodeId: id })
+        setCtxErr(null)
+    }, [props])
 
     const ctxNode = useMemo(() => {
         if (!ctx) return null
@@ -257,35 +254,28 @@ export function GraphFlow(props: Props) {
 
     const ctxRuntime = useMemo(() => {
         if (!ctx) return null
-        return props.nodeStateById?.get(ctx.nodeId) ?? null
-    }, [ctx, props.nodeStateById])
+        return getRuntime(ctx.nodeId)
+    }, [ctx, getRuntime])
 
-    const canForce = useMemo(() => {
-        return ctxNode != null && isDigitalOutNodeType(ctxNode.type)
-    }, [ctxNode])
+    const canForce = useMemo(() => ctxNode != null && isDigitalOutNodeType(ctxNode.type), [ctxNode])
 
-    const actForce = useCallback(
-        async (desired: boolean, holdMs: number) => {
-            if (!ctx) return
-            if (!canForce) return
-            setCtxBusy(true)
-            setCtxErr(null)
-            try {
-                const runtimeId = ctxRuntime?.id ?? ctx.nodeId
-                await props.onForceDo(runtimeId, desired, holdMs)
-                closeCtx()
-            } catch (err) {
-                setCtxErr(err instanceof Error ? err.message : String(err))
-            } finally {
-                setCtxBusy(false)
-            }
-        },
-        [ctx, canForce, ctxRuntime?.id, props, closeCtx]
-    )
+    const actForce = useCallback(async (desired: boolean, holdMs: number) => {
+        if (!ctx || !canForce) return
+        setCtxBusy(true)
+        setCtxErr(null)
+        try {
+            const runtimeId = ctxRuntime?.id ?? ctx.nodeId
+            await props.onForceDo(runtimeId, desired, holdMs)
+            closeCtx()
+        } catch (err) {
+            setCtxErr(err instanceof Error ? err.message : String(err))
+        } finally {
+            setCtxBusy(false)
+        }
+    }, [ctx, canForce, ctxRuntime?.id, props, closeCtx])
 
     const actRelease = useCallback(async () => {
-        if (!ctx) return
-        if (!canForce) return
+        if (!ctx || !canForce) return
         setCtxBusy(true)
         setCtxErr(null)
         try {
@@ -310,7 +300,6 @@ export function GraphFlow(props: Props) {
         e.preventDefault()
         const type = e.dataTransfer.getData("application/plc-node") as NodeType
         if (!type) return
-
         const pos = rf.screenToFlowPosition({ x: e.clientX, y: e.clientY })
         props.onCreateNode?.(type, pos)
     }
@@ -330,19 +319,14 @@ export function GraphFlow(props: Props) {
                 fitView
                 snapToGrid
                 snapGrid={[20, 20]}
-                defaultEdgeOptions={{
-                    type: "smoothstep",
-                    style: { strokeWidth: 2 },
-                }}
+                defaultEdgeOptions={{ type: "smoothstep", style: { strokeWidth: 2 } }}
                 onDragOver={onDragOver}
                 onDrop={onDrop}
             >
-
                 <Background />
                 <Controls />
             </ReactFlow>
 
-            {/* Context menu */}
             {ctx && (
                 <div
                     style={{
@@ -358,52 +342,30 @@ export function GraphFlow(props: Props) {
                         overflow: "hidden",
                         fontFamily: "system-ui",
                     }}
-                    onMouseDown={(e) => {
-                        e.stopPropagation()
-                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
                 >
                     <div style={{ padding: 10, background: "#f9fafb", borderBottom: "1px solid #e5e7eb" }}>
-                        <div style={{ fontWeight: 800, fontSize: 12 }}>
-                            Node #{ctx.nodeId} {ctxNode ? ctxNode.type : ""}
-                        </div>
+                        <div style={{ fontWeight: 800, fontSize: 12 }}>Node #{ctx.nodeId} {ctxNode ? ctxNode.type : ""}</div>
                         <div style={{ opacity: 0.75, fontSize: 12, marginTop: 4 }}>
                             out:{" "}
                             <span style={{ fontFamily: "ui-monospace, monospace", fontWeight: 700 }}>
                                 {ctxNode ? formatRuntime(ctxNode.valueType, ctxRuntime) : "—"}
                             </span>
-                            {ctxRuntime?.forceActive ? (
-                                <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 800, color: "#991b1b" }}>FORCE</span>
-                            ) : null}
+                            {ctxRuntime?.forceActive ? <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 800, color: "#991b1b" }}>FORCE</span> : null}
                         </div>
                         {!canForce && <div style={{ marginTop: 6, fontSize: 12, color: "#991b1b" }}>Force доступен только для DIGITAL_OUT</div>}
                     </div>
 
                     <div style={{ display: "grid", padding: 8, gap: 6 }}>
-                        <MenuBtn disabled={!canForce || ctxBusy} onClick={() => actForce(true, 0)}>
-                            Force ON
-                        </MenuBtn>
-                        <MenuBtn disabled={!canForce || ctxBusy} onClick={() => actForce(false, 0)}>
-                            Force OFF
-                        </MenuBtn>
-                        <MenuBtn disabled={!canForce || ctxBusy} onClick={() => actForce(true, 1000)}>
-                            Force ON (1s)
-                        </MenuBtn>
-                        <MenuBtn disabled={!canForce || ctxBusy} onClick={() => actForce(true, 5000)}>
-                            Force ON (5s)
-                        </MenuBtn>
+                        <MenuBtn disabled={!canForce || ctxBusy} onClick={() => actForce(true, 0)}>Force ON</MenuBtn>
+                        <MenuBtn disabled={!canForce || ctxBusy} onClick={() => actForce(false, 0)}>Force OFF</MenuBtn>
+                        <MenuBtn disabled={!canForce || ctxBusy} onClick={() => actForce(true, 1000)}>Force ON (1s)</MenuBtn>
+                        <MenuBtn disabled={!canForce || ctxBusy} onClick={() => actForce(true, 5000)}>Force ON (5s)</MenuBtn>
                         <div style={{ height: 1, background: "#e5e7eb", margin: "4px 0" }} />
-                        <MenuBtn disabled={!canForce || ctxBusy} onClick={actRelease}>
-                            Release
-                        </MenuBtn>
-                        <MenuBtn disabled={ctxBusy} onClick={closeCtx}>
-                            Close
-                        </MenuBtn>
+                        <MenuBtn disabled={!canForce || ctxBusy} onClick={actRelease}>Release</MenuBtn>
+                        <MenuBtn disabled={ctxBusy} onClick={closeCtx}>Close</MenuBtn>
 
-                        {ctxErr && (
-                            <div style={{ padding: 8, borderRadius: 8, background: "#fee2e2", color: "#991b1b", fontSize: 12 }}>
-                                {ctxErr}
-                            </div>
-                        )}
+                        {ctxErr && <div style={{ padding: 8, borderRadius: 8, background: "#fee2e2", color: "#991b1b", fontSize: 12 }}>{ctxErr}</div>}
                     </div>
                 </div>
             )}
