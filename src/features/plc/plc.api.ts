@@ -69,7 +69,7 @@ export async function getPlcStatus(): Promise<PlcStatus> {
 export async function uploadGraph(graphJson: string): Promise<unknown> {
     return fetchJson<unknown>("/api/plc/graph/upload", {
         method: "POST",
-        body: JSON.stringify({ graphJson }),
+        body: graphJson,
     }, TIMEOUT_GRAPH_UPLOAD)
 }
 

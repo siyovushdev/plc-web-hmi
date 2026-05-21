@@ -58,6 +58,17 @@ type BuiltNode = {
 }
 type BuiltGraph = { cycleMs: number; nodes: BuiltNode[] }
 
+function nodeTypeFromApi(type: unknown): NodeType {
+    if (typeof type === "string") return type as NodeType
+
+    if (typeof type === "number") {
+        const t = NODE_TYPES[type]
+        if (t) return t
+    }
+
+    throw new Error(`Active graph: unsupported node type ${String(type)}`)
+}
+
 function isRecord(x: unknown): x is Record<string, unknown> {
     return typeof x === "object" && x !== null
 }
@@ -85,7 +96,7 @@ function parseBuiltGraphOrThrow(graphJson: string): BuiltGraph {
         const flags = n["flags"]
 
         if (typeof id !== "number") throw new Error(`Active graph: node[${idx}].id invalid`)
-        if (typeof type !== "string") throw new Error(`Active graph: node[${idx}].type invalid`)
+        const parsedType = nodeTypeFromApi(type)
         if (typeof valueType !== "number") throw new Error(`Active graph: node[${idx}].valueType invalid`)
         if (typeof inA !== "number" || typeof inB !== "number") throw new Error(`Active graph: node[${idx}].inA/inB invalid`)
         if (typeof paramInt !== "number") throw new Error(`Active graph: node[${idx}].paramInt invalid`)
@@ -93,7 +104,7 @@ function parseBuiltGraphOrThrow(graphJson: string): BuiltGraph {
         if (typeof paramMs !== "number") throw new Error(`Active graph: node[${idx}].paramMs invalid`)
         if (typeof flags !== "number") throw new Error(`Active graph: node[${idx}].flags invalid`)
 
-        return { id, type: type as NodeType, valueType, inA, inB, paramInt, paramFloat, paramMs, flags }
+        return { id, type: parsedType, valueType, inA, inB, paramInt, paramFloat, paramMs, flags }
     })
 
     return { cycleMs, nodes: outNodes }
